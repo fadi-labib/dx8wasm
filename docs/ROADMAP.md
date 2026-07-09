@@ -15,6 +15,7 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - ✅ **Deliverable met:** pack an arbitrary directory + serve it; loader streams + caches in OPFS. No game needed.
 
 ## Phase 2 — Runtime translation layer
+- **Detailed plan: [`PHASE2_PLAN.md`](PHASE2_PLAN.md)** (milestones 2.0–2.6, verification rig, decisions, risks). Target: Generals.
 - Re-derive `runtime/d3d8webgl/` (~3.4k LOC surface, ref: Lolendor) behind the `contract.h` boundary.
 - Re-derive `runtime/compatlib/` (Win32→POSIX shims, ref: Lolendor CompatLib).
 - Build `runtime/platform/` (SDL3 window/input + OpenAL) as a thin new layer.
