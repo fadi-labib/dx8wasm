@@ -42,6 +42,8 @@ we take from it is still GPL-3.0-only (EA root); prefer re-deriving over copying
 | glslang | BSD-3-Clause | yes |
 | Naga | MIT OR Apache-2.0 | yes |
 | Tint (Dawn) | BSD-3-Clause | yes |
+| **brotli-wasm** (web build) | **Apache-2.0** | yes — **vendored in-tree** at `web-runtime/vendor/brotli/` (browser has no native brotli). LICENSE included there. |
 
 Whenever a library is actually vendored into the tree, drop its full LICENSE
-text under `third_party/<name>/LICENSE` and reference it here.
+text under the vendor dir (e.g. `web-runtime/vendor/<name>/LICENSE`) and
+reference it here.

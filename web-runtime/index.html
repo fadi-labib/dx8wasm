@@ -1,0 +1,83 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dx8wasm — asset loader harness</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 48rem; }
+  h1 { font-size: 1.2rem; }
+  #bar { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin: .5rem 0; }
+  #fill { height: 100%; width: 0; background: #3a7; transition: width .1s; }
+  #status { color: #555; }
+  table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+  td, th { text-align: left; padding: 2px 8px; border-bottom: 1px solid #eee; font-variant-numeric: tabular-nums; }
+  td.n { text-align: right; }
+  .muted { color: #999; }
+</style>
+</head>
+<body>
+<h1>dx8wasm asset loader</h1>
+<p id="status">Isolated: <span id="coi">?</span> · <span id="phase">idle</span></p>
+<div id="bar"><div id="fill"></div></div>
+<table id="files"><thead><tr><th>file</th><th class="n">bytes</th></tr></thead><tbody></tbody></table>
+
+<script type="module">
+import init, { decompress } from './vendor/brotli/brotli_wasm.js';
+import { loadArchive } from './loader.js';
+
+const $ = (id) => document.getElementById(id);
+$('coi').textContent = self.crossOriginIsolated ? 'yes' : 'no';
+
+const params = new URLSearchParams(location.search);
+const archive = params.get('archive');
+
+function setPhase(t) { $('phase').textContent = t; }
+function setProgress(p) { $('fill').style.width = `${Math.round(p * 100)}%`; }
+
+async function run() {
+  await init();                          // load brotli wasm decoder
+  const dec = (u8) => decompress(u8);
+
+  if (!archive) { setPhase('no ?archive= given'); return; }
+
+  setPhase('loading');
+  const t0 = performance.now();
+  const { dir, meta, cached } = await loadArchive(archive, {
+    decompress: dec,
+    onProgress: (p) => {
+      setProgress(p.total ? p.received / p.total : 0);
+      setPhase(p.phase === 'cache-hit' ? 'cache hit' : `streaming ${p.segment}/${p.segments}`);
+    },
+  });
+  setProgress(1);
+
+  // List what landed in OPFS.
+  const rows = [];
+  async function walk(handle, prefix) {
+    for await (const [name, h] of handle.entries()) {
+      if (name === '.complete') continue;
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (h.kind === 'directory') await walk(h, path);
+      else rows.push([path, (await h.getFile()).size]);
+    }
+  }
+  await walk(dir, '');
+  rows.sort((a, b) => a[0].localeCompare(b[0]));
+  const tb = $('files').querySelector('tbody');
+  for (const [p, n] of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p}</td><td class="n">${n.toLocaleString()}</td>`;
+    tb.appendChild(tr);
+  }
+  setPhase(`done — ${rows.length} files, ${cached ? 'from cache' : 'streamed'}, ${(performance.now() - t0).toFixed(0)}ms`);
+
+  // Expose for headless tests.
+  window.__loadResult = { meta, cached, coi: self.crossOriginIsolated, fileCount: rows.length };
+}
+
+run().catch((e) => { setPhase('error: ' + e.message); window.__loadResult = { error: String(e) }; });
+</script>
+</body>
+</html>

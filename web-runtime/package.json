@@ -1,0 +1,14 @@
+{
+  "name": "dx8wasm-web-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "test": "node test/gaxd.test.mjs && node test/loader.browser.test.mjs"
+  },
+  "devDependencies": {
+    "brotli-wasm": "^3.0.1",
+    "playwright": "^1.48.0"
+  }
+}

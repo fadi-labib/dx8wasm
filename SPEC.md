@@ -71,7 +71,7 @@ for behavior, not license.
 | **graphics-ff** — fixed-function → shader generator | `runtime/graphics-ff/` | new; models DXVK `d3d9_fixed_function.cpp` (zlib), no code copied | to build |
 | **compatlib** — Win32 → POSIX/Emscripten shims | `runtime/compatlib/` | re-derived, ref: Lolendor CompatLib (~28 headers) | to build |
 | **platform** — SDL3 windowing/input + OpenAL audio glue | `runtime/platform/` | thin, new + SDL3 | to build |
-| **web-runtime** — shell, loader, OPFS, Brotli, COI SW | `web-runtime/` | re-derived, ref: Lolendor `web/shell` | gaxd decoder ✅; loader/SW next |
+| **web-runtime** — shell, loader, OPFS, Brotli, COI SW | `web-runtime/` | re-derived, ref: Lolendor `web/shell` | ✅ loader/OPFS/COI, headlessly verified |
 | **asset-tools** — GAXD segmented-Brotli packer | `asset-tools/` | re-derived, ref: Lolendor `packer.py` | ✅ present |
 | **cmake** — Emscripten toolchain + template CMakeLists | `cmake/` | new, ref: Lolendor preset | in progress |
 | **tools/serve-https.py** — dev HTTPS+COI+Range server | `tools/` | ours (this session) | ✅ present |

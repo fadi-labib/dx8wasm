@@ -9,21 +9,24 @@ reference is out of scope here — that belongs to a consuming game.)
 | Piece | State |
 |---|---|
 | `gaxd.js` — pure GAXD v2 decoder (browser + Node) | ✅ done, cross-validated |
-| `test/gaxd.test.mjs` — packer↔loader byte-exact check | ✅ passing |
-| `loader.js` — streaming + OPFS + brotli-wasm wiring | ⏳ next (needs browser to verify) |
-| `coi-serviceworker.js` — cross-origin isolation | ⏳ next |
-| `index.html` — minimal load-and-list harness | ⏳ next |
+| `loader.js` — Range streaming + OPFS cache (bounded memory) | ✅ done, headlessly verified |
+| `coi-serviceworker.js` — cross-origin isolation for static hosts | ✅ done |
+| `index.html` — load-and-list harness | ✅ done |
+| `vendor/brotli/` — brotli-wasm web decoder (Apache-2.0) | ✅ vendored |
 
-## Test
+## Tests
 
 ```bash
-node web-runtime/test/gaxd.test.mjs
+cd web-runtime && npm install && npm test
 ```
 
-Packs a fixture with `asset-tools/pack.py`, decodes it with `gaxd.js` using
-Node's built-in brotli, and asserts every file round-trips — both full decode
-and per-segment streamed (the path the browser loader takes). This is the
-cross-language contract check for `GAXD_FORMAT.md`.
+- `test/gaxd.test.mjs` — cross-language contract check: packs a fixture with
+  `asset-tools/pack.py`, decodes with `gaxd.js` via Node's built-in brotli,
+  asserts byte-exact on both full-decode and per-segment-streamed paths.
+- `test/loader.browser.test.mjs` — end-to-end in real Chromium (Playwright):
+  serves a packed archive with Range + COOP/COEP, runs `loader.js`, asserts
+  every file lands in OPFS byte-exact (SHA-256), the page is crossOriginIsolated,
+  and a reload hits the OPFS cache.
 
 ## Design note
 

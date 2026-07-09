@@ -11,8 +11,8 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 ## Phase 1 — Asset pipeline & web harness (cleanest, game-agnostic)
 - ✅ `asset-tools/pack.py` — GAXD v2 segmented-Brotli packer, re-derived clean (Linux-correct `python3`), round-trip self-test.
 - ✅ `web-runtime/gaxd.js` — pure GAXD decoder, cross-validated against the packer in Node (byte-exact, full + streamed).
-- ⏳ `web-runtime/loader.js` (Range streaming + OPFS cache), `coi-serviceworker.js`, `index.html` — verified headlessly (Playwright/Chromium). Multiplayer (lobby/signaling/netbridge) is out of scope here — it belongs to a consuming game.
-- Deliverable: pack an arbitrary directory + serve it; loader streams + caches in OPFS. No game needed.
+- ✅ `web-runtime/loader.js` (Range streaming + OPFS cache, bounded memory), `coi-serviceworker.js`, `index.html`, vendored brotli-wasm — verified headlessly end-to-end in real Chromium (Playwright): byte-exact OPFS, crossOriginIsolated, cache-hit on reload. Multiplayer (lobby/signaling/netbridge) is out of scope here — it belongs to a consuming game.
+- ✅ **Deliverable met:** pack an arbitrary directory + serve it; loader streams + caches in OPFS. No game needed.
 
 ## Phase 2 — Runtime translation layer
 - Re-derive `runtime/d3d8webgl/` (~3.4k LOC surface, ref: Lolendor) behind the `contract.h` boundary.
