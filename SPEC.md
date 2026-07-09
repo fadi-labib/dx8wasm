@@ -67,13 +67,13 @@ for behavior, not license.
 
 | Component | Path | Origin | Extraction status |
 |---|---|---|---|
-| **d3d8webgl** — D3D8 COM object model → WebGL2 runtime | `runtime/d3d8webgl/` | Lolendor (~3.4k LOC, near-zero coupling) | to extract + generalize |
+| **d3d8webgl** — D3D8 COM object model → WebGL2 runtime | `runtime/d3d8webgl/` | re-derived (~3.4k LOC surface), ref: Lolendor | to build + generalize |
 | **graphics-ff** — fixed-function → shader generator | `runtime/graphics-ff/` | new; models DXVK `d3d9_fixed_function.cpp` (zlib), no code copied | to build |
-| **compatlib** — Win32 → POSIX/Emscripten shims | `runtime/compatlib/` | Lolendor CompatLib (~28 headers) | to extract |
+| **compatlib** — Win32 → POSIX/Emscripten shims | `runtime/compatlib/` | re-derived, ref: Lolendor CompatLib (~28 headers) | to build |
 | **platform** — SDL3 windowing/input + OpenAL audio glue | `runtime/platform/` | thin, new + SDL3 | to build |
-| **web-runtime** — shell, loader, OPFS, Brotli, COI SW, WebRTC | `web-runtime/` | Lolendor `web/shell` | to extract, de-brand |
-| **asset-tools** — GAXD segmented-Brotli packer | `asset-tools/` | Lolendor `packer.py` (+ Linux fix) | to extract + fix |
-| **cmake** — Emscripten toolchain + template CMakeLists | `cmake/` | new + Lolendor preset | in progress |
+| **web-runtime** — shell, loader, OPFS, Brotli, COI SW | `web-runtime/` | re-derived, ref: Lolendor `web/shell` | gaxd decoder ✅; loader/SW next |
+| **asset-tools** — GAXD segmented-Brotli packer | `asset-tools/` | re-derived, ref: Lolendor `packer.py` | ✅ present |
+| **cmake** — Emscripten toolchain + template CMakeLists | `cmake/` | new, ref: Lolendor preset | in progress |
 | **tools/serve-https.py** — dev HTTPS+COI+Range server | `tools/` | ours (this session) | ✅ present |
 | **contract** — integration ABI a game targets | `runtime/include/dx8wasm/` | new | ✅ present |
 

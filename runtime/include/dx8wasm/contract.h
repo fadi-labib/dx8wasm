@@ -5,8 +5,6 @@
 // Win32/D3D8 entry points; dx8wasm provides them. This header declares only the
 // *dx8wasm-specific* surface a port needs beyond the stock D3D8/Win32 API:
 // runtime init/config, capability introspection, and the backend selector.
-//
-// SPDX-License-Identifier: MIT
 #ifndef DX8WASM_CONTRACT_H
 #define DX8WASM_CONTRACT_H
 
