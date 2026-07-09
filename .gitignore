@@ -1,0 +1,13 @@
+/build/
+/dist/
+/web-runtime/dist/
+*.o
+*.wasm
+*.data
+tools/cert.pem
+tools/key.pem
+.pack-cache/
+node_modules/
+__pycache__/
+*.pyc
+.remember/
