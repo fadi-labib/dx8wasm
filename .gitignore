@@ -4,6 +4,8 @@
 *.o
 *.wasm
 *.data
+# ...but vendored third-party wasm (e.g. brotli decoder) must be tracked:
+!web-runtime/vendor/**/*.wasm
 tools/cert.pem
 tools/key.pem
 .pack-cache/
