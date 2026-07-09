@@ -1,0 +1,96 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dx8wasm — load your game</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0 auto; max-width: 34rem; padding: 3rem 1.5rem; }
+  h1 { font-size: 1.3rem; }
+  button { font: inherit; padding: .6rem 1.1rem; border: 0; border-radius: 8px; background: #2b6; color: #fff; cursor: pointer; }
+  button:disabled { background: #bbb; cursor: default; }
+  #bar { height: 10px; background: #eee; border-radius: 5px; overflow: hidden; margin: 1rem 0; display: none; }
+  #fill { height: 100%; width: 0; background: #2b6; transition: width .1s; }
+  .muted { color: #777; font-size: .9em; }
+  .note { background: #f6f6f6; border-left: 3px solid #2b6; padding: .6rem .9rem; border-radius: 4px; }
+  #err { color: #c33; }
+</style>
+</head>
+<body>
+<h1>Play C&amp;C Generals: Zero Hour in your browser</h1>
+<p class="note">Your game files stay on your computer. Point us at your own installed copy —
+nothing is uploaded, and we never host the game's data. You need to own the game.</p>
+
+<div id="stage"></div>
+<div id="bar"><div id="fill"></div></div>
+<p id="status" class="muted"></p>
+<p id="err"></p>
+
+<script type="module">
+import { GENERALS, isImported, pickerSupported, pickGameFolder, validateInstall, importInstall } from './onboard.js';
+
+const $ = (id) => document.getElementById(id);
+const stage = $('stage'), bar = $('bar'), fill = $('fill'), status = $('status'), err = $('err');
+const state = { phase: 'init' };
+window.__onboardState = state;
+
+const fmt = (n) => n > 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB`
+  : n > 1024 ** 2 ? `${Math.round(n / 1024 ** 2)} MB` : `${Math.round(n / 1024)} KB`;
+
+function ready() {
+  state.phase = 'ready';
+  stage.innerHTML = `<p>✅ <b>${GENERALS.name}</b> is loaded and ready.</p><button id="play">Play</button>`;
+  $('play').onclick = () => { status.textContent = 'Booting the engine… (wired up by the consuming game)'; };
+}
+
+function offerImport() {
+  state.phase = 'offer';
+  if (!pickerSupported()) {
+    stage.innerHTML = `<p id="err">This browser can't open a folder picker. Please use desktop <b>Chrome</b> or <b>Edge</b>.</p>`;
+    return;
+  }
+  stage.innerHTML = `<button id="pick">Locate my game folder…</button>
+    <p class="muted">Pick the folder that contains the game's <code>.big</code> files
+    (your Steam/EA/Origin or disc install).</p>`;
+  $('pick').onclick = doImport;
+}
+
+async function doImport() {
+  err.textContent = '';
+  let handle;
+  try { handle = await pickGameFolder(); }
+  catch (e) { if (e.name !== 'AbortError') err.textContent = e.message; return; }
+
+  status.textContent = 'Checking the folder…';
+  const v = await validateInstall(handle, GENERALS);
+  if (!v.ok) { err.textContent = v.reason; return; }
+
+  state.phase = 'importing';
+  stage.innerHTML = '';
+  bar.style.display = 'block';
+  const t0 = performance.now();
+  try {
+    const res = await importInstall(handle, GENERALS, {
+      onProgress: (p) => {
+        fill.style.width = `${Math.round((p.bytesDone / p.bytesTotal) * 100)}%`;
+        status.textContent = `Copying ${p.filesDone}/${p.filesTotal} — ${fmt(p.bytesDone)} / ${fmt(p.bytesTotal)}`;
+      },
+    });
+    state.result = res;
+    status.textContent = `Imported ${res.files} files (${fmt(res.bytes)}) in ${((performance.now() - t0) / 1000).toFixed(1)}s.`;
+    bar.style.display = 'none';
+    ready();
+  } catch (e) {
+    err.textContent = 'Import failed: ' + e.message;
+    bar.style.display = 'none';
+  }
+}
+
+(async () => {
+  if (await isImported(GENERALS)) ready();
+  else offerImport();
+})();
+</script>
+</body>
+</html>
