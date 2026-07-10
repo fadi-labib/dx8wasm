@@ -20,6 +20,7 @@ execFileSync('bash', [join(repo, 'scripts', 'build-wasm.sh')], { stdio: 'inherit
 // Each smoke: [ jsFile, expectedRGBA ]. Only run those that built.
 const SMOKES = [
   ['gl_smoke', [51, 102, 153, 255]],
+  ['platform_smoke', [51, 102, 153, 255]],
 ];
 
 const server = createServer((req, res) => {
