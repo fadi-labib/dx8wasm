@@ -17,13 +17,16 @@ struct Program {
   GLint uLightPos = -1, uLightAtten = -1, uLightRange = -1;
   GLint uSpotDir = -1, uSpotParams = -1;   // spot: aim dir; (cosHalfTheta, cosHalfPhi, falloff)
   GLint uGlobalAmbient = -1, uMatDiffuse = -1, uMatAmbient = -1, uMatEmissive = -1;
+  // Linear fog uniforms (valid only on fog programs).
+  GLint uFogColor = -1, uFogStart = -1, uFogEnd = -1;
 };
 // Cached by (FVF, texture color-op, alpha-test func, lit). colorOp is ignored
 // without texture coords; alphaFunc == 0 means no alpha test, else it is a
 // D3DCMPFUNC emulated via discard (GLES has no fixed-function alpha test). When
 // `lit`, the vertex shader computes per-vertex ambient + directional-diffuse
 // lighting (Gouraud, matching D3D). Returns nullptr and logs loudly on an
-// unsupported combo — never silently wrong.
-const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, bool lit);
+// unsupported combo — never silently wrong. `fog` adds a linear-fog blend to the
+// final colour (applies to every variant), driven by eye-space depth.
+const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, bool lit, bool fog);
 }
 #endif

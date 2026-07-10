@@ -26,9 +26,9 @@ int main() {
     report_error("CreateDevice failed"); return 1;
   }
 
-  // Three distinct unhandled tokens. D3DRS_FOGENABLE stays unimplemented past
-  // 2.6, so this smoke is stable as later slices implement other states.
-  dev->SetRenderState(D3DRS_FOGENABLE, 1);
+  // Three distinct unhandled tokens. D3DRS_FILLMODE stays unimplemented, so this
+  // smoke is stable as later slices implement other render states.
+  dev->SetRenderState(D3DRS_FILLMODE, 2 /* wireframe */);
   dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_ADD);   // unsupported op -> fallback
   IDirect3DTexture8* tex = nullptr;
   dev->CreateTexture(2, 2, 1, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, &tex);   // unsupported format

@@ -81,6 +81,8 @@ void set_identity(float* m) {
   m[0] = m[5] = m[10] = m[15] = 1.0f;
 }
 
+float as_float(DWORD v) { float f; std::memcpy(&f, &v, sizeof f); return f; }   // D3DRS float-in-DWORD
+
 GLenum gl_blend(DWORD b) {
   switch (b) {
     case D3DBLEND_ZERO:        return GL_ZERO;
@@ -112,6 +114,12 @@ struct Device8 : IDirect3DDevice8 {
   D3DLIGHT8 lights[ff::MAX_LIGHTS]{};
   bool lightOn[ff::MAX_LIGHTS] = {false};
   D3DMATERIAL8 material{ {1, 1, 1, 1}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}, 0 };
+
+  // Linear fog state (D3DRS_FOG*). Only linear mode is implemented; EXP/EXP2
+  // modes are flagged via the coverage layer.
+  bool fogEnable = false;
+  float fogColor[3] = {0, 0, 0};
+  float fogStart = 0.0f, fogEnd = 1.0f;
 
   Device8() {
     set_identity(world); set_identity(view); set_identity(proj);
@@ -220,6 +228,18 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_ALPHAREF:        alphaRef = Value; break;
       case D3DRS_ALPHAFUNC:       alphaFunc = Value; break;
       case D3DRS_LIGHTING:        lighting = Value != 0; break;
+      case D3DRS_FOGENABLE:       fogEnable = Value != 0; break;
+      case D3DRS_FOGSTART:        fogStart = as_float(Value); break;
+      case D3DRS_FOGEND:          fogEnd = as_float(Value); break;
+      case D3DRS_FOGCOLOR:
+        fogColor[0] = ((Value >> 16) & 0xff) / 255.0f;
+        fogColor[1] = ((Value >> 8) & 0xff) / 255.0f;
+        fogColor[2] = (Value & 0xff) / 255.0f;
+        break;
+      case D3DRS_FOGTABLEMODE:
+      case D3DRS_FOGVERTEXMODE:   // only linear implemented; flag EXP/EXP2
+        if (Value != D3DFOG_LINEAR && Value != D3DFOG_NONE) coverage::unhandled_render_state(State);
+        break;
       case D3DRS_AMBIENT:         // D3DCOLOR 0xAARRGGBB -> linear RGBA
         globalAmbient[0] = ((Value >> 16) & 0xff) / 255.0f;
         globalAmbient[1] = ((Value >> 8) & 0xff) / 255.0f;
@@ -320,7 +340,7 @@ struct Device8 : IDirect3DDevice8 {
     const bool textured = (fvf & D3DFVF_TEX1) && texture;
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
     const uint32_t af = alphaTestEnable ? alphaFunc : 0;
-    const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af, lit);
+    const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af, lit, fogEnable);
     if (!p) return D3DERR_INVALIDCALL;
 
     glUseProgram(p->prog);
@@ -357,6 +377,11 @@ struct Device8 : IDirect3DDevice8 {
     }
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
     if (lit) set_light_uniforms(p);
+    if (fogEnable) {
+      glUniform3fv(p->uFogColor, 1, fogColor);
+      glUniform1f(p->uFogStart, fogStart);
+      glUniform1f(p->uFogEnd, fogEnd);
+    }
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices->b.glbuf);
     glDrawElements(GL_TRIANGLES, (GLsizei)(PrimitiveCount * 3), GL_UNSIGNED_SHORT,
                    (void*)(uintptr_t)(StartIndex * sizeof(uint16_t)));

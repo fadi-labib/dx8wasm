@@ -30,6 +30,7 @@ const SMOKES = [
   ['multilight_smoke', [153, 102, 102, 255]],  // two directional lights sum: (0.5,0.1,0)+(0.1,0.3,0.4)=(0.6,0.4,0.4)
   ['point_light_smoke', [227, 227, 227, 255]], // point light, hitDot 0.943 * atten 0.943 = 0.889
   ['spot_light_smoke', [144, 96, 48, 255]],    // spot inside cone: diffuse(0.6,0.4,0.2) * hitDot 0.943
+  ['fog_smoke', [128, 0, 128, 255]],           // linear fog: mix(blue, red, 0.5) at eye-depth 0.5
 ];
 
 const server = createServer((req, res) => {

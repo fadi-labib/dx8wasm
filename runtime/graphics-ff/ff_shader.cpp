@@ -39,7 +39,7 @@ const char* alpha_cmp(uint32_t func) {
 // (both diffuse attribute and A8R8G8B8 texel), so every color source is read
 // back with a .bgra swizzle to recover RGBA. Matrices are D3D row-major uploaded
 // as-is (GL reads the transpose), hence proj*view*world — correct for D3D.
-Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc, bool lit) {
+Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc, bool lit, bool fog) {
   const bool outColor = lit || hasDiffuse;   // vertex emits an interpolated color
   std::string vs = "#version 300 es\n"
     "layout(location=0) in vec3 aPos;\n";
@@ -60,9 +60,14 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     "uniform vec4 uLightDiffuse[MAXL];\n"
     "uniform vec4 uLightAmbient[MAXL];\n"
     "uniform vec4 uGlobalAmbient, uMatDiffuse, uMatAmbient, uMatEmissive;\n";
+  if (fog) vs += "uniform float uFogStart, uFogEnd;\nout float vFog;\n";
   if (outColor) vs += "out vec4 vColor;\n";
   if (hasTex)   vs += "out vec2 vUV;\n";
   vs += "void main(){ gl_Position = uProj*uView*uWorld*vec4(aPos,1.0);\n";
+  if (fog) vs +=
+    // Linear fog on eye-space depth: 1 = no fog (near), 0 = full fog (far).
+    "  float fz = (uView*uWorld*vec4(aPos,1.0)).z;\n"
+    "  vFog = clamp((uFogEnd - fz) / (uFogEnd - uFogStart), 0.0, 1.0);\n";
   if (lit) vs +=
     // D3D fixed-function lighting is per-vertex (Gouraud), accumulated over the
     // enabled lights. Directional: hitDir = -Direction, atten 1. Point: hitDir
@@ -113,6 +118,7 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   std::string fs = "#version 300 es\nprecision mediump float;\n";
   if (outColor) fs += "in vec4 vColor;\n";
   if (hasTex)   fs += "in vec2 vUV;\nuniform sampler2D uTex;\n";
+  if (fog)      fs += "in float vFog;\nuniform vec3 uFogColor;\n";
   const bool alphaTest = alphaFunc != 0 && alphaFunc != D3DCMP_ALWAYS;
   if (alphaTest) fs += "uniform float uAlphaRef;\n";
   fs += "out vec4 frag;\nvoid main(){ vec4 c = " + color + ";\n";
@@ -120,6 +126,7 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     if (alphaFunc == D3DCMP_NEVER)      fs += "  discard;\n";
     else if (const char* op = alpha_cmp(alphaFunc)) fs += std::string("  if (!(c.a ") + op + " uAlphaRef)) discard;\n";
   }
+  if (fog) fs += "  c.rgb = mix(uFogColor, c.rgb, vFog);\n";   // fog blends colour, leaves alpha
   fs += "  frag = c; }\n";
 
   GLuint v = compile(GL_VERTEX_SHADER, vs), f = compile(GL_FRAGMENT_SHADER, fs);
@@ -146,15 +153,18 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   prog.uMatDiffuse    = glGetUniformLocation(p, "uMatDiffuse");
   prog.uMatAmbient    = glGetUniformLocation(p, "uMatAmbient");
   prog.uMatEmissive   = glGetUniformLocation(p, "uMatEmissive");
+  prog.uFogColor      = glGetUniformLocation(p, "uFogColor");
+  prog.uFogStart      = glGetUniformLocation(p, "uFogStart");
+  prog.uFogEnd        = glGetUniformLocation(p, "uFogEnd");
   return prog;
 }
 
 } // namespace
 
-const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, bool lit) {
+const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, bool lit, bool fog) {
   const bool hasTex = fvf & D3DFVF_TEX1;
   if (!hasTex) colorOp = 0;   // op is irrelevant without a texture — collapse the key
-  const uint64_t key = ((uint64_t)lit << 48) | ((uint64_t)alphaFunc << 40) |
+  const uint64_t key = ((uint64_t)fog << 49) | ((uint64_t)lit << 48) | ((uint64_t)alphaFunc << 40) |
                        ((uint64_t)colorOp << 20) | fvf;
 
   auto it = g_cache.find(key);
@@ -170,7 +180,7 @@ const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, b
     std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x colorOp %u lit %d\n", fvf, colorOp, (int)lit);
     return nullptr;
   }
-  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp, alphaFunc, lit));
+  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp, alphaFunc, lit, fog));
   return &r.first->second;
 }
 
