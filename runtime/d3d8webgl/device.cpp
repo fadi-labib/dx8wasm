@@ -234,8 +234,8 @@ struct Device8 : IDirect3DDevice8 {
     if (!p) return D3DERR_INVALIDCALL;
     if (Index >= ff::MAX_LIGHTS) return D3DERR_INVALIDCALL;   // ponytail: 8-light cap
     lights[Index] = *p;
-    if (p->Type != D3DLIGHT_DIRECTIONAL)   // point/spot deferred — flag loudly, don't mis-render
-      std::fprintf(stderr, "[dx8wasm] light %u type %d unsupported (directional only) — skipped\n", Index, p->Type);
+    if (p->Type != D3DLIGHT_DIRECTIONAL && p->Type != D3DLIGHT_POINT)   // spot deferred — flag, don't mis-render
+      std::fprintf(stderr, "[dx8wasm] light %u type %d unsupported (directional/point only) — skipped\n", Index, p->Type);
     return D3D_OK;
   }
   HRESULT LightEnable(DWORD Index, BOOL Enable) override {
@@ -256,25 +256,37 @@ struct Device8 : IDirect3DDevice8 {
     glFrontFace(GL_CCW);
     glCullFace(mode == D3DCULL_CCW ? GL_FRONT : GL_BACK);
   }
-  // Upload the fixed-function lighting uniforms. Enabled directional lights are
-  // compacted into contiguous arrays (vector to light = normalize(-Direction),
-  // atten 1, per DXVK d3d9_fixed_function); point/spot are skipped (see SetLight).
+  // Upload the fixed-function lighting uniforms. Enabled directional/point lights
+  // are compacted into contiguous arrays; spot is skipped (see SetLight). Point
+  // lights carry world position + attenuation coefficients + range.
   void set_light_uniforms(const ff::Program* p) {
-    float dir[ff::MAX_LIGHTS * 3], diff[ff::MAX_LIGHTS * 4], amb[ff::MAX_LIGHTS * 4];
+    int type[ff::MAX_LIGHTS];
+    float dir[ff::MAX_LIGHTS * 3], pos[ff::MAX_LIGHTS * 3], atten[ff::MAX_LIGHTS * 3];
+    float range[ff::MAX_LIGHTS], diff[ff::MAX_LIGHTS * 4], amb[ff::MAX_LIGHTS * 4];
     int count = 0;
     for (int i = 0; i < ff::MAX_LIGHTS; i++) {
-      if (!lightOn[i] || lights[i].Type != D3DLIGHT_DIRECTIONAL) continue;
-      float dx = -lights[i].Direction.x, dy = -lights[i].Direction.y, dz = -lights[i].Direction.z;
+      const D3DLIGHT8& L = lights[i];
+      if (!lightOn[i] || (L.Type != D3DLIGHT_DIRECTIONAL && L.Type != D3DLIGHT_POINT)) continue;
+      type[count] = (L.Type == D3DLIGHT_POINT) ? 1 : 0;
+      // directional: vector to light = normalize(-Direction)
+      float dx = -L.Direction.x, dy = -L.Direction.y, dz = -L.Direction.z;
       float len = std::sqrt(dx * dx + dy * dy + dz * dz);
       if (len < 1e-6f) len = 1.0f;
       dir[count * 3 + 0] = dx / len; dir[count * 3 + 1] = dy / len; dir[count * 3 + 2] = dz / len;
-      std::memcpy(&diff[count * 4], &lights[i].Diffuse.r, 4 * sizeof(float));
-      std::memcpy(&amb[count * 4], &lights[i].Ambient.r, 4 * sizeof(float));
+      pos[count * 3 + 0] = L.Position.x; pos[count * 3 + 1] = L.Position.y; pos[count * 3 + 2] = L.Position.z;
+      atten[count * 3 + 0] = L.Attenuation0; atten[count * 3 + 1] = L.Attenuation1; atten[count * 3 + 2] = L.Attenuation2;
+      range[count] = L.Range;
+      std::memcpy(&diff[count * 4], &L.Diffuse.r, 4 * sizeof(float));
+      std::memcpy(&amb[count * 4], &L.Ambient.r, 4 * sizeof(float));
       count++;
     }
     glUniform1i(p->uLightCount, count);
     if (count) {
+      glUniform1iv(p->uLightType, count, type);
       glUniform3fv(p->uLightDir, count, dir);
+      glUniform3fv(p->uLightPos, count, pos);
+      glUniform3fv(p->uLightAtten, count, atten);
+      glUniform1fv(p->uLightRange, count, range);
       glUniform4fv(p->uLightDiffuse, count, diff);
       glUniform4fv(p->uLightAmbient, count, amb);
     }

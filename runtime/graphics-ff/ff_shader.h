@@ -13,7 +13,8 @@ struct Program {
   GLint uWorld = -1, uView = -1, uProj = -1, uTex = -1, uAlphaRef = -1;
   // Fixed-function lighting uniforms (valid only on lit programs). The uLight*
   // handles are the base of MAX_LIGHTS-sized arrays; uLightCount bounds the loop.
-  GLint uLightCount = -1, uLightDir = -1, uLightDiffuse = -1, uLightAmbient = -1;
+  GLint uLightCount = -1, uLightType = -1, uLightDir = -1, uLightDiffuse = -1, uLightAmbient = -1;
+  GLint uLightPos = -1, uLightAtten = -1, uLightRange = -1;
   GLint uGlobalAmbient = -1, uMatDiffuse = -1, uMatAmbient = -1, uMatEmissive = -1;
 };
 // Cached by (FVF, texture color-op, alpha-test func, lit). colorOp is ignored

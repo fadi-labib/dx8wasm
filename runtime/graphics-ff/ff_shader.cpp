@@ -50,7 +50,11 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   if (lit) vs +=
     "const int MAXL = " + std::to_string(MAX_LIGHTS) + ";\n"
     "uniform int uLightCount;\n"
-    "uniform vec3 uLightDir[MAXL];\n"          // = normalize(-Direction), precomputed
+    "uniform int uLightType[MAXL];\n"          // 0 = directional, 1 = point
+    "uniform vec3 uLightDir[MAXL];\n"          // directional: normalize(-Direction)
+    "uniform vec3 uLightPos[MAXL];\n"          // point: world-space position
+    "uniform vec3 uLightAtten[MAXL];\n"        // (a0, a1, a2)
+    "uniform float uLightRange[MAXL];\n"
     "uniform vec4 uLightDiffuse[MAXL];\n"
     "uniform vec4 uLightAmbient[MAXL];\n"
     "uniform vec4 uGlobalAmbient, uMatDiffuse, uMatAmbient, uMatEmissive;\n";
@@ -59,15 +63,26 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   vs += "void main(){ gl_Position = uProj*uView*uWorld*vec4(aPos,1.0);\n";
   if (lit) vs +=
     // D3D fixed-function lighting is per-vertex (Gouraud), accumulated over the
-    // enabled lights (directional only for now). ponytail: object-space normal
-    // (identity/rigid world so far); an inverse-transpose normal matrix lands
-    // when a non-uniform-scale world is exercised.
+    // enabled lights. Directional: hitDir = -Direction, atten 1. Point: hitDir
+    // toward the light, atten = 1/(a0+a1·d+a2·d²) zeroed past Range (per DXVK).
+    // ponytail: object-space normal (identity/rigid world so far); an
+    // inverse-transpose normal matrix lands when non-uniform-scale world is used.
     "  vec3 N = normalize(aNormal);\n"
+    "  vec3 worldPos = (uWorld * vec4(aPos, 1.0)).xyz;\n"
     "  vec4 dsum = vec4(0.0), asum = vec4(0.0);\n"
     "  for (int i = 0; i < uLightCount; i++) {\n"
-    "    float ndl = clamp(dot(N, uLightDir[i]), 0.0, 1.0);\n"
+    "    vec3 hitDir; float atten;\n"
+    "    if (uLightType[i] == 0) { hitDir = uLightDir[i]; atten = 1.0; }\n"
+    "    else {\n"
+    "      vec3 d = uLightPos[i] - worldPos; float dist = length(d);\n"
+    "      hitDir = dist > 1e-6 ? d / dist : vec3(0.0, 0.0, 1.0);\n"
+    "      float a = uLightAtten[i].x + uLightAtten[i].y*dist + uLightAtten[i].z*dist*dist;\n"
+    "      atten = a > 0.0 ? 1.0 / a : 1.0;\n"
+    "      if (dist > uLightRange[i]) atten = 0.0;\n"
+    "    }\n"
+    "    float ndl = clamp(dot(N, hitDir), 0.0, 1.0) * atten;\n"
     "    dsum += uLightDiffuse[i] * ndl;\n"
-    "    asum += uLightAmbient[i];\n"
+    "    asum += uLightAmbient[i] * atten;\n"
     "  }\n"
     "  vec4 c = uMatEmissive + uMatAmbient*(uGlobalAmbient + asum) + uMatDiffuse*dsum;\n"
     "  c.a = uMatDiffuse.a;\n"
@@ -110,7 +125,11 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   prog.uTex      = glGetUniformLocation(p, "uTex");
   prog.uAlphaRef = glGetUniformLocation(p, "uAlphaRef");
   prog.uLightCount    = glGetUniformLocation(p, "uLightCount");
+  prog.uLightType     = glGetUniformLocation(p, "uLightType[0]");
   prog.uLightDir      = glGetUniformLocation(p, "uLightDir[0]");
+  prog.uLightPos      = glGetUniformLocation(p, "uLightPos[0]");
+  prog.uLightAtten    = glGetUniformLocation(p, "uLightAtten[0]");
+  prog.uLightRange    = glGetUniformLocation(p, "uLightRange[0]");
   prog.uLightDiffuse  = glGetUniformLocation(p, "uLightDiffuse[0]");
   prog.uLightAmbient  = glGetUniformLocation(p, "uLightAmbient[0]");
   prog.uGlobalAmbient = glGetUniformLocation(p, "uGlobalAmbient");
