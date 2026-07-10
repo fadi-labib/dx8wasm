@@ -27,6 +27,7 @@ const SMOKES = [
   ['coverage_smoke', [1, 1, 1, 3]],        // 1 unhandled RS/TOP/FMT each, callback fired 3x
   ['render_state_smoke', [153, 51, 102, 191]], // 50% red over blue bg (depth/cull/alpha checked internally)
   ['light_smoke', [153, 102, 51, 255]],        // directional diffuse: matDiff * lightDiff(0.6,0.4,0.2) at N·L=1
+  ['multilight_smoke', [153, 102, 102, 255]],  // two directional lights sum: (0.5,0.1,0)+(0.1,0.3,0.4)=(0.6,0.4,0.4)
 ];
 
 const server = createServer((req, res) => {

@@ -5,6 +5,7 @@
 #include "coverage/coverage.h"
 #include <GLES3/gl3.h>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -105,11 +106,11 @@ struct Device8 : IDirect3DDevice8 {
   DWORD alphaRef = 0;
   float world[16], view[16], proj[16];
 
-  // Fixed-function lighting state (single directional light 0 for slice 3.1).
+  // Fixed-function lighting state (up to MAX_LIGHTS, directional only for now).
   bool lighting = false;                          // D3DRS_LIGHTING (see roadmap: default diverges from D3D's TRUE)
   float globalAmbient[4] = {0, 0, 0, 0};          // D3DRS_AMBIENT
-  D3DLIGHT8 light0{};
-  bool light0On = false;
+  D3DLIGHT8 lights[ff::MAX_LIGHTS]{};
+  bool lightOn[ff::MAX_LIGHTS] = {false};
   D3DMATERIAL8 material{ {1, 1, 1, 1}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}, 0 };
 
   Device8() {
@@ -229,15 +230,16 @@ struct Device8 : IDirect3DDevice8 {
     }
     return D3D_OK;
   }
-  // ponytail: only light index 0 is stored; multi-light accumulation grows when
-  // a target game uses more than one enabled light.
   HRESULT SetLight(DWORD Index, const D3DLIGHT8* p) override {
     if (!p) return D3DERR_INVALIDCALL;
-    if (Index == 0) light0 = *p;
+    if (Index >= ff::MAX_LIGHTS) return D3DERR_INVALIDCALL;   // ponytail: 8-light cap
+    lights[Index] = *p;
+    if (p->Type != D3DLIGHT_DIRECTIONAL)   // point/spot deferred — flag loudly, don't mis-render
+      std::fprintf(stderr, "[dx8wasm] light %u type %d unsupported (directional only) — skipped\n", Index, p->Type);
     return D3D_OK;
   }
   HRESULT LightEnable(DWORD Index, BOOL Enable) override {
-    if (Index == 0) light0On = Enable != 0;
+    if (Index < ff::MAX_LIGHTS) lightOn[Index] = Enable != 0;
     return D3D_OK;
   }
   HRESULT SetMaterial(const D3DMATERIAL8* p) override {
@@ -254,24 +256,28 @@ struct Device8 : IDirect3DDevice8 {
     glFrontFace(GL_CCW);
     glCullFace(mode == D3DCULL_CCW ? GL_FRONT : GL_BACK);
   }
-  // Upload the fixed-function lighting uniforms. Directional light: the vector to
-  // the light is normalize(-Direction), atten 1 (per DXVK d3d9_fixed_function).
-  // A disabled light contributes zero, leaving material emissive + global ambient.
+  // Upload the fixed-function lighting uniforms. Enabled directional lights are
+  // compacted into contiguous arrays (vector to light = normalize(-Direction),
+  // atten 1, per DXVK d3d9_fixed_function); point/spot are skipped (see SetLight).
   void set_light_uniforms(const ff::Program* p) {
-    float ldir[3] = {0, 0, 1};
-    const float zero[4] = {0, 0, 0, 0};
-    const float* ldiff = zero;
-    const float* lamb = zero;
-    if (light0On) {
-      float dx = -light0.Direction.x, dy = -light0.Direction.y, dz = -light0.Direction.z;
+    float dir[ff::MAX_LIGHTS * 3], diff[ff::MAX_LIGHTS * 4], amb[ff::MAX_LIGHTS * 4];
+    int count = 0;
+    for (int i = 0; i < ff::MAX_LIGHTS; i++) {
+      if (!lightOn[i] || lights[i].Type != D3DLIGHT_DIRECTIONAL) continue;
+      float dx = -lights[i].Direction.x, dy = -lights[i].Direction.y, dz = -lights[i].Direction.z;
       float len = std::sqrt(dx * dx + dy * dy + dz * dz);
-      if (len > 1e-6f) { ldir[0] = dx / len; ldir[1] = dy / len; ldir[2] = dz / len; }
-      ldiff = &light0.Diffuse.r;
-      lamb  = &light0.Ambient.r;
+      if (len < 1e-6f) len = 1.0f;
+      dir[count * 3 + 0] = dx / len; dir[count * 3 + 1] = dy / len; dir[count * 3 + 2] = dz / len;
+      std::memcpy(&diff[count * 4], &lights[i].Diffuse.r, 4 * sizeof(float));
+      std::memcpy(&amb[count * 4], &lights[i].Ambient.r, 4 * sizeof(float));
+      count++;
     }
-    glUniform3fv(p->uLightDir, 1, ldir);
-    glUniform4fv(p->uLightDiffuse, 1, ldiff);
-    glUniform4fv(p->uLightAmbient, 1, lamb);
+    glUniform1i(p->uLightCount, count);
+    if (count) {
+      glUniform3fv(p->uLightDir, count, dir);
+      glUniform4fv(p->uLightDiffuse, count, diff);
+      glUniform4fv(p->uLightAmbient, count, amb);
+    }
     glUniform4fv(p->uGlobalAmbient, 1, globalAmbient);
     glUniform4fv(p->uMatDiffuse, 1, &material.Diffuse.r);
     glUniform4fv(p->uMatAmbient, 1, &material.Ambient.r);

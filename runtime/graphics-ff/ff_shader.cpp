@@ -48,19 +48,28 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   if (lit)        vs += "layout(location=3) in vec3 aNormal;\n";
   vs += "uniform mat4 uWorld, uView, uProj;\n";
   if (lit) vs +=
-    "uniform vec3 uLightDir;\n"
-    "uniform vec4 uLightDiffuse, uLightAmbient, uGlobalAmbient;\n"
-    "uniform vec4 uMatDiffuse, uMatAmbient, uMatEmissive;\n";
+    "const int MAXL = " + std::to_string(MAX_LIGHTS) + ";\n"
+    "uniform int uLightCount;\n"
+    "uniform vec3 uLightDir[MAXL];\n"          // = normalize(-Direction), precomputed
+    "uniform vec4 uLightDiffuse[MAXL];\n"
+    "uniform vec4 uLightAmbient[MAXL];\n"
+    "uniform vec4 uGlobalAmbient, uMatDiffuse, uMatAmbient, uMatEmissive;\n";
   if (outColor) vs += "out vec4 vColor;\n";
   if (hasTex)   vs += "out vec2 vUV;\n";
   vs += "void main(){ gl_Position = uProj*uView*uWorld*vec4(aPos,1.0);\n";
   if (lit) vs +=
-    // D3D fixed-function lighting is per-vertex (Gouraud). Single directional
-    // light, atten 1. ponytail: object-space normal (identity world so far); a
-    // proper inverse-transpose normal matrix lands when non-identity world is used.
+    // D3D fixed-function lighting is per-vertex (Gouraud), accumulated over the
+    // enabled lights (directional only for now). ponytail: object-space normal
+    // (identity/rigid world so far); an inverse-transpose normal matrix lands
+    // when a non-uniform-scale world is exercised.
     "  vec3 N = normalize(aNormal);\n"
-    "  float ndl = clamp(dot(N, uLightDir), 0.0, 1.0);\n"
-    "  vec4 c = uMatEmissive + uMatAmbient*uGlobalAmbient + uMatAmbient*uLightAmbient + uMatDiffuse*uLightDiffuse*ndl;\n"
+    "  vec4 dsum = vec4(0.0), asum = vec4(0.0);\n"
+    "  for (int i = 0; i < uLightCount; i++) {\n"
+    "    float ndl = clamp(dot(N, uLightDir[i]), 0.0, 1.0);\n"
+    "    dsum += uLightDiffuse[i] * ndl;\n"
+    "    asum += uLightAmbient[i];\n"
+    "  }\n"
+    "  vec4 c = uMatEmissive + uMatAmbient*(uGlobalAmbient + asum) + uMatDiffuse*dsum;\n"
     "  c.a = uMatDiffuse.a;\n"
     "  vColor = clamp(c, 0.0, 1.0);\n";
   else if (hasDiffuse) vs += "  vColor = aColor.bgra;\n";
@@ -100,9 +109,10 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   prog.uProj     = glGetUniformLocation(p, "uProj");
   prog.uTex      = glGetUniformLocation(p, "uTex");
   prog.uAlphaRef = glGetUniformLocation(p, "uAlphaRef");
-  prog.uLightDir      = glGetUniformLocation(p, "uLightDir");
-  prog.uLightDiffuse  = glGetUniformLocation(p, "uLightDiffuse");
-  prog.uLightAmbient  = glGetUniformLocation(p, "uLightAmbient");
+  prog.uLightCount    = glGetUniformLocation(p, "uLightCount");
+  prog.uLightDir      = glGetUniformLocation(p, "uLightDir[0]");
+  prog.uLightDiffuse  = glGetUniformLocation(p, "uLightDiffuse[0]");
+  prog.uLightAmbient  = glGetUniformLocation(p, "uLightAmbient[0]");
   prog.uGlobalAmbient = glGetUniformLocation(p, "uGlobalAmbient");
   prog.uMatDiffuse    = glGetUniformLocation(p, "uMatDiffuse");
   prog.uMatAmbient    = glGetUniformLocation(p, "uMatAmbient");

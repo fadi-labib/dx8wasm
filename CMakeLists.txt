@@ -71,6 +71,12 @@ target_link_libraries(light_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(light_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(light_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(multilight_smoke runtime/test/multilight_smoke.cpp)
+target_include_directories(multilight_smoke PRIVATE runtime runtime/d3d8)
+target_link_libraries(multilight_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(multilight_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(multilight_smoke PROPERTIES SUFFIX ".js")
+
 # Interactive browser demo (not a test): keeps EXIT_RUNTIME on for the main loop.
 add_executable(spin_demo runtime/demo/spin_demo.cpp)
 target_include_directories(spin_demo PRIVATE runtime runtime/d3d8)
