@@ -57,7 +57,7 @@ coverage counters are mapped onto Generals' surface.
 - ✔️ Check: set an unimplemented state → the unhandled callback fires, counters
   increment, rendering continues.
 
-**2.6 — Common render-state subset**
+**2.6 — Common render-state subset** ✅ (done; `render_state_smoke`)
 - Depth test/write, alpha blend, backface cull, alpha test (emulated in-shader —
   GLES has no fixed-function alpha test). The subset Generals' menu/skirmish hits.
 - ✔️ Check: a mixed opaque + alpha-blended multi-primitive scene; readback asserts.

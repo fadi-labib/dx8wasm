@@ -9,11 +9,12 @@
 namespace ff {
 struct Program {
   GLuint prog = 0;
-  GLint uWorld = -1, uView = -1, uProj = -1, uTex = -1;
+  GLint uWorld = -1, uView = -1, uProj = -1, uTex = -1, uAlphaRef = -1;
 };
-// Cached by (FVF, texture color-op). colorOp is ignored when the FVF has no
-// texture coords. Returns nullptr and logs loudly on an unsupported combo —
-// never silently wrong.
-const Program* program_for(uint32_t fvf, uint32_t colorOp);
+// Cached by (FVF, texture color-op, alpha-test func). colorOp is ignored without
+// texture coords; alphaFunc == 0 means no alpha test, else it is a D3DCMPFUNC and
+// the shader emulates the (missing in GLES) fixed-function alpha test via discard.
+// Returns nullptr and logs loudly on an unsupported combo — never silently wrong.
+const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc);
 }
 #endif

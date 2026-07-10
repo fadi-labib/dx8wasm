@@ -14,6 +14,7 @@ bool create_gl_context(int width, int height) {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);   // D3D depth test needs a depth buffer
   g_window = SDL_CreateWindow("dx8wasm", width, height, SDL_WINDOW_OPENGL);
   if (!g_window) return false;
   g_ctx = SDL_GL_CreateContext(g_window);

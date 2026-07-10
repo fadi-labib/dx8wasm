@@ -76,6 +76,16 @@ void set_identity(float* m) {
   m[0] = m[5] = m[10] = m[15] = 1.0f;
 }
 
+GLenum gl_blend(DWORD b) {
+  switch (b) {
+    case D3DBLEND_ZERO:        return GL_ZERO;
+    case D3DBLEND_ONE:         return GL_ONE;
+    case D3DBLEND_SRCALPHA:    return GL_SRC_ALPHA;
+    case D3DBLEND_INVSRCALPHA: return GL_ONE_MINUS_SRC_ALPHA;
+    default:                   return GL_ONE;
+  }
+}
+
 struct Device8 : IDirect3DDevice8 {
   uint32_t refs = 1;
   VertexBuffer8* stream = nullptr;  // bound stream 0 (not owned; game holds the ref)
@@ -84,9 +94,16 @@ struct Device8 : IDirect3DDevice8 {
   uint32_t fvf = 0;
   Texture8* texture = nullptr;              // bound stage-0 texture (not owned)
   uint32_t colorOp = D3DTOP_MODULATE;       // D3D stage-0 COLOROP default
+  GLenum srcBlend = GL_ONE, dstBlend = GL_ZERO;   // D3D blend defaults
+  bool alphaTestEnable = false;
+  uint32_t alphaFunc = D3DCMP_ALWAYS;
+  DWORD alphaRef = 0;
   float world[16], view[16], proj[16];
 
-  Device8() { set_identity(world); set_identity(view); set_identity(proj); }
+  Device8() {
+    set_identity(world); set_identity(view); set_identity(proj);
+    glDepthFunc(GL_LEQUAL);   // D3D default ZFUNC is LESSEQUAL (GL default is LESS)
+  }
 
   uint32_t AddRef() override { return ++refs; }
   uint32_t Release() override { uint32_t r = --refs; if (!r) { platform::destroy_gl_context(); delete this; } return r; }
@@ -147,11 +164,29 @@ struct Device8 : IDirect3DDevice8 {
     }
     return D3D_OK;
   }
-  HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD) override {
-    // 2.5: nothing implemented yet — every state is unhandled + counted. 2.6
-    // moves depth/blend/cull/alpha-test out of this branch.
-    coverage::unhandled_render_state(State);
+  HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) override {
+    switch (State) {
+      case D3DRS_ZENABLE:         Value ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST); break;
+      case D3DRS_ZWRITEENABLE:    glDepthMask(Value ? GL_TRUE : GL_FALSE); break;
+      case D3DRS_ALPHABLENDENABLE: Value ? glEnable(GL_BLEND) : glDisable(GL_BLEND); break;
+      case D3DRS_SRCBLEND:        srcBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
+      case D3DRS_DESTBLEND:       dstBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
+      case D3DRS_CULLMODE:        apply_cull(Value); break;
+      case D3DRS_ALPHATESTENABLE: alphaTestEnable = Value != 0; break;
+      case D3DRS_ALPHAREF:        alphaRef = Value; break;
+      case D3DRS_ALPHAFUNC:       alphaFunc = Value; break;
+      default:                    coverage::unhandled_render_state(State); break;
+    }
     return D3D_OK;
+  }
+  // ponytail: NDC winding == GL winding here (no D3D Y-flip projection yet), so
+  // D3DCULL_CCW maps straight to culling GL front faces. Revisit when a real
+  // projection matrix introduces the D3D screen-space flip.
+  void apply_cull(DWORD mode) {
+    if (mode == D3DCULL_NONE) { glDisable(GL_CULL_FACE); return; }
+    glEnable(GL_CULL_FACE);
+    glFrontFace(GL_CCW);
+    glCullFace(mode == D3DCULL_CCW ? GL_FRONT : GL_BACK);
   }
   HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) override {
     if (!pMatrix) return D3DERR_INVALIDCALL;
@@ -165,7 +200,8 @@ struct Device8 : IDirect3DDevice8 {
                                UINT PrimitiveCount) override {
     if (Type != D3DPT_TRIANGLELIST || !stream || !indices) return D3DERR_INVALIDCALL;
     const bool textured = (fvf & D3DFVF_TEX1) && texture;
-    const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE);
+    const uint32_t af = alphaTestEnable ? alphaFunc : 0;
+    const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af);
     if (!p) return D3DERR_INVALIDCALL;
 
     glUseProgram(p->prog);
@@ -195,6 +231,7 @@ struct Device8 : IDirect3DDevice8 {
       glBindTexture(GL_TEXTURE_2D, texture->tex);
       glUniform1i(p->uTex, 0);
     }
+    if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices->b.glbuf);
     glDrawElements(GL_TRIANGLES, (GLsizei)(PrimitiveCount * 3), GL_UNSIGNED_SHORT,
                    (void*)(uintptr_t)(StartIndex * sizeof(uint16_t)));

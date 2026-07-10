@@ -21,11 +21,25 @@ GLuint compile(GLenum type, const std::string& src) {
   return s;
 }
 
+// The GLSL comparison operator that emulates each D3DCMPFUNC alpha test. The
+// shader discards when the test *fails*, i.e. when `!(alpha OP ref)` holds.
+const char* alpha_cmp(uint32_t func) {
+  switch (func) {
+    case D3DCMP_LESS:         return "<";
+    case D3DCMP_LESSEQUAL:    return "<=";
+    case D3DCMP_GREATER:      return ">";
+    case D3DCMP_GREATEREQUAL: return ">=";
+    case D3DCMP_EQUAL:        return "==";
+    case D3DCMP_NOTEQUAL:     return "!=";
+    default:                  return nullptr;   // NEVER/ALWAYS handled by caller
+  }
+}
+
 // Assemble the GLSL from the state flags. D3DCOLOR arrives as [B,G,R,A] bytes
 // (both diffuse attribute and A8R8G8B8 texel), so every color source is read
 // back with a .bgra swizzle to recover RGBA. Matrices are D3D row-major uploaded
 // as-is (GL reads the transpose), hence proj*view*world — correct for D3D.
-Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp) {
+Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc) {
   std::string vs = "#version 300 es\n"
     "layout(location=0) in vec3 aPos;\n";
   if (hasDiffuse) vs += "layout(location=1) in vec4 aColor;\n";
@@ -38,37 +52,46 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp) {
   if (hasTex)     vs += "  vUV = aUV;\n";
   vs += "}\n";
 
+  std::string color;
+  if (hasTex) {
+    const char* tex = "texture(uTex, vUV).bgra";
+    if (colorOp == D3DTOP_SELECTARG1)          color = tex;                        // texture only
+    else /* MODULATE (D3D stage-0 default) */  color = hasDiffuse ? std::string("vColor * ") + tex : tex;
+  } else {
+    color = hasDiffuse ? "vColor" : "vec4(1.0)";
+  }
+
   std::string fs = "#version 300 es\nprecision mediump float;\n";
   if (hasDiffuse) fs += "in vec4 vColor;\n";
   if (hasTex)     fs += "in vec2 vUV;\nuniform sampler2D uTex;\n";
-  fs += "out vec4 frag;\nvoid main(){ frag = ";
-  if (hasTex) {
-    const char* tex = "texture(uTex, vUV).bgra";
-    if (colorOp == D3DTOP_SELECTARG1)          fs += tex;                        // texture only
-    else /* MODULATE (D3D stage-0 default) */  fs += hasDiffuse ? std::string("vColor * ") + tex : tex;
-  } else {
-    fs += hasDiffuse ? "vColor" : "vec4(1.0)";
+  const bool alphaTest = alphaFunc != 0 && alphaFunc != D3DCMP_ALWAYS;
+  if (alphaTest) fs += "uniform float uAlphaRef;\n";
+  fs += "out vec4 frag;\nvoid main(){ vec4 c = " + color + ";\n";
+  if (alphaTest) {
+    if (alphaFunc == D3DCMP_NEVER)      fs += "  discard;\n";
+    else if (const char* op = alpha_cmp(alphaFunc)) fs += std::string("  if (!(c.a ") + op + " uAlphaRef)) discard;\n";
   }
-  fs += "; }\n";
+  fs += "  frag = c; }\n";
 
   GLuint v = compile(GL_VERTEX_SHADER, vs), f = compile(GL_FRAGMENT_SHADER, fs);
   GLuint p = glCreateProgram();
   glAttachShader(p, v); glAttachShader(p, f); glLinkProgram(p);
   glDeleteShader(v); glDeleteShader(f);
   Program prog; prog.prog = p;
-  prog.uWorld = glGetUniformLocation(p, "uWorld");
-  prog.uView  = glGetUniformLocation(p, "uView");
-  prog.uProj  = glGetUniformLocation(p, "uProj");
-  prog.uTex   = glGetUniformLocation(p, "uTex");
+  prog.uWorld    = glGetUniformLocation(p, "uWorld");
+  prog.uView     = glGetUniformLocation(p, "uView");
+  prog.uProj     = glGetUniformLocation(p, "uProj");
+  prog.uTex      = glGetUniformLocation(p, "uTex");
+  prog.uAlphaRef = glGetUniformLocation(p, "uAlphaRef");
   return prog;
 }
 
 } // namespace
 
-const Program* program_for(uint32_t fvf, uint32_t colorOp) {
+const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc) {
   const bool hasTex = fvf & D3DFVF_TEX1;
   if (!hasTex) colorOp = 0;   // op is irrelevant without a texture — collapse the key
-  const uint64_t key = ((uint64_t)colorOp << 32) | fvf;
+  const uint64_t key = ((uint64_t)alphaFunc << 40) | ((uint64_t)colorOp << 20) | fvf;
 
   auto it = g_cache.find(key);
   if (it != g_cache.end()) return &it->second;
@@ -82,7 +105,7 @@ const Program* program_for(uint32_t fvf, uint32_t colorOp) {
     std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x colorOp %u\n", fvf, colorOp);
     return nullptr;
   }
-  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp));
+  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp, alphaFunc));
   return &r.first->second;
 }
 
