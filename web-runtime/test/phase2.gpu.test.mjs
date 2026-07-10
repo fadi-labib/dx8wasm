@@ -21,6 +21,7 @@ execFileSync('bash', [join(repo, 'scripts', 'build-wasm.sh')], { stdio: 'inherit
 const SMOKES = [
   ['gl_smoke', [51, 102, 153, 255]],
   ['platform_smoke', [51, 102, 153, 255]],
+  ['d3d8_smoke', [51, 102, 204, 255]],   // 0xFF3366CC -> R=51 G=102 B=204
 ];
 
 const server = createServer((req, res) => {
