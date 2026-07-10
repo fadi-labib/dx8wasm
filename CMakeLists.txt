@@ -101,6 +101,13 @@ target_link_libraries(specular_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(specular_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(specular_smoke PROPERTIES SUFFIX ".js")
 
+# Conformance probe (tool, not a smoke): emits coverage JSON for CONFORMANCE.md.
+add_executable(conformance runtime/test/conformance.cpp)
+target_include_directories(conformance PRIVATE runtime runtime/d3d8 runtime/include)
+target_link_libraries(conformance PRIVATE dx8_d3d8webgl)
+target_link_options(conformance PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(conformance PROPERTIES SUFFIX ".js")
+
 # Interactive browser demo (not a test): keeps EXIT_RUNTIME on for the main loop.
 add_executable(spin_demo runtime/demo/spin_demo.cpp)
 target_include_directories(spin_demo PRIVATE runtime runtime/d3d8)
