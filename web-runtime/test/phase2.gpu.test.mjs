@@ -22,6 +22,7 @@ const SMOKES = [
   ['gl_smoke', [51, 102, 153, 255]],
   ['platform_smoke', [51, 102, 153, 255]],
   ['d3d8_smoke', [51, 102, 204, 255]],   // 0xFF3366CC -> R=51 G=102 B=204
+  ['draw_smoke', [51, 204, 102, 255]],   // FVF quad, 0xFF33CC66 -> R=51 G=204 B=102
 ];
 
 const server = createServer((req, res) => {

@@ -38,7 +38,7 @@ coverage counters are mapped onto Generals' surface.
 - `Clear()` → `glClear`; `Present()` → commit/swap.
 - ✔️ Check: same readback as 2.0 but driven through the **D3D8 API**, not raw GL.
 
-**2.3 — Buffers + FVF + first fixed-function draw**
+**2.3 — Buffers + FVF + first fixed-function draw** ✅ (done; `draw_smoke`)
 - `CreateVertexBuffer`/`CreateIndexBuffer` + `Lock`/`Unlock`, `SetStreamSource`,
   `SetIndices`, `SetVertexShader(FVF)`, `DrawIndexedPrimitive`.
 - `graphics-ff` generates a minimal transform + diffuse GLSL from FVF + world/

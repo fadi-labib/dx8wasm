@@ -17,7 +17,8 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 ## Phase 2 — Runtime translation layer
 - **Detailed plan: [`PHASE2_PLAN.md`](PHASE2_PLAN.md)** (milestones 2.0–2.6, verification rig, decisions, risks). Target: Generals.
 - ✅ **Slice 2.0–2.2 done** (spec+plan in `superpowers/`): Emscripten toolchain, SDL3→WebGL2 `platform` seam, clean-room `d3d8.h`, `d3d8webgl` device — `Direct3DCreate8`→`CreateDevice`→`Clear`/`Present` verified by headless pixel readback (gl/platform/d3d8 smokes). Deferred: pin emsdk (SDL3 port experimental), drop interface virtual-dtors before real-ABI compat, single-device/global-context constraint to revisit in 2.3.
-- ⏳ **2.3 next:** vertex/index buffers + FVF + `DrawIndexedPrimitive` (colored quad, corner-pixel readback).
+- ✅ **2.3 done:** vertex/index buffers (`Lock`/`Unlock` → GL buffer upload), `SetStreamSource`/`SetIndices`, `SetVertexShader(FVF)`, `SetTransform` (world/view/proj), `DrawIndexedPrimitive`. New `graphics-ff` module generates + caches a fixed-function GLSL program from the FVF (`XYZ|DIFFUSE` today). Verified by `draw_smoke`: full-viewport colored quad, corner+center pixel readback. Deferred: only the `XYZ|DIFFUSE` FVF and a hardcoded attribute layout exist — grow per-FVF in 2.4; non-identity transform convention unverified until a real projection is needed.
+- ⏳ **2.4 next:** textures + one texture-stage combiner (`CreateTexture`/`LockRect`, `SetTexture`, `D3DTOP_MODULATE`); textured-quad texel readback.
 - Re-derive `runtime/d3d8webgl/` (~3.4k LOC surface, ref: Lolendor) behind the `contract.h` boundary.
 - Re-derive `runtime/compatlib/` (Win32→POSIX shims, ref: Lolendor CompatLib).
 - Build `runtime/platform/` (SDL3 window/input + OpenAL) as a thin new layer.
