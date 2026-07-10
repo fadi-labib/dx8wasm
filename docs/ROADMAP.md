@@ -16,6 +16,8 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 
 ## Phase 2 — Runtime translation layer
 - **Detailed plan: [`PHASE2_PLAN.md`](PHASE2_PLAN.md)** (milestones 2.0–2.6, verification rig, decisions, risks). Target: Generals.
+- ✅ **Slice 2.0–2.2 done** (spec+plan in `superpowers/`): Emscripten toolchain, SDL3→WebGL2 `platform` seam, clean-room `d3d8.h`, `d3d8webgl` device — `Direct3DCreate8`→`CreateDevice`→`Clear`/`Present` verified by headless pixel readback (gl/platform/d3d8 smokes). Deferred: pin emsdk (SDL3 port experimental), drop interface virtual-dtors before real-ABI compat, single-device/global-context constraint to revisit in 2.3.
+- ⏳ **2.3 next:** vertex/index buffers + FVF + `DrawIndexedPrimitive` (colored quad, corner-pixel readback).
 - Re-derive `runtime/d3d8webgl/` (~3.4k LOC surface, ref: Lolendor) behind the `contract.h` boundary.
 - Re-derive `runtime/compatlib/` (Win32→POSIX shims, ref: Lolendor CompatLib).
 - Build `runtime/platform/` (SDL3 window/input + OpenAL) as a thin new layer.
