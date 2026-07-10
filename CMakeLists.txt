@@ -29,8 +29,9 @@ target_link_options(platform_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(platform_smoke PROPERTIES SUFFIX ".js")
 
 add_library(dx8_d3d8webgl STATIC
-  runtime/d3d8webgl/d3d8.cpp runtime/d3d8webgl/device.cpp runtime/graphics-ff/ff_shader.cpp)
-target_include_directories(dx8_d3d8webgl PUBLIC runtime runtime/d3d8)
+  runtime/d3d8webgl/d3d8.cpp runtime/d3d8webgl/device.cpp
+  runtime/graphics-ff/ff_shader.cpp runtime/coverage/coverage.cpp)
+target_include_directories(dx8_d3d8webgl PUBLIC runtime runtime/d3d8 runtime/include)
 target_link_libraries(dx8_d3d8webgl PUBLIC dx8_platform)
 target_compile_options(dx8_d3d8webgl PRIVATE ${DX8_SDL3})
 
@@ -51,3 +52,9 @@ target_include_directories(draw_tex_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(draw_tex_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(draw_tex_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(draw_tex_smoke PROPERTIES SUFFIX ".js")
+
+add_executable(coverage_smoke runtime/test/coverage_smoke.cpp)
+target_include_directories(coverage_smoke PRIVATE runtime runtime/d3d8 runtime/include)
+target_link_libraries(coverage_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(coverage_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(coverage_smoke PROPERTIES SUFFIX ".js")

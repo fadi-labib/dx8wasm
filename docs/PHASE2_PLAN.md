@@ -50,7 +50,7 @@ coverage counters are mapped onto Generals' surface.
   `SetTextureStageState` (`D3DTOP_MODULATE` first).
 - ✔️ Check: textured quad; readback asserts the sampled texel color.
 
-**2.5 — Coverage / fallback layer (wire early, per feedback)**
+**2.5 — Coverage / fallback layer (wire early, per feedback)** ✅ (done; `coverage_smoke`)
 - Every unhandled `D3DRS_*` / `D3DTSS_*` / `D3DFMT_*` **logs loudly, counts, and
   falls back** — never silently wrong. Drive the `contract.h` hooks
   (`dx8wasm_get_coverage`, `dx8wasm_set_unhandled_callback`).

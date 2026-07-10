@@ -2,6 +2,7 @@
 #include "d3d8/d3d8.h"
 #include "platform/platform.h"
 #include "graphics-ff/ff_shader.h"
+#include "coverage/coverage.h"
 #include <GLES3/gl3.h>
 #include <cstring>
 #include <vector>
@@ -123,9 +124,12 @@ struct Device8 : IDirect3DDevice8 {
     indices = static_cast<IndexBuffer8*>(ib); return D3D_OK;
   }
   HRESULT SetVertexShader(DWORD Handle) override { fvf = Handle; return D3D_OK; }
-  HRESULT CreateTexture(UINT Width, UINT Height, UINT, DWORD, D3DFORMAT, D3DPOOL,
+  HRESULT CreateTexture(UINT Width, UINT Height, UINT, DWORD, D3DFORMAT Format, D3DPOOL,
                         IDirect3DTexture8** out) override {
     if (!out) return D3DERR_INVALIDCALL;
+    // Only A8R8G8B8/X8R8G8B8 upload as-is; anything else falls back to RGBA bytes.
+    if (Format != D3DFMT_A8R8G8B8 && Format != D3DFMT_X8R8G8B8)
+      coverage::unhandled_format(Format);
     *out = new Texture8(Width, Height);
     return D3D_OK;
   }
@@ -133,7 +137,20 @@ struct Device8 : IDirect3DDevice8 {
     texture = static_cast<Texture8*>(t); return D3D_OK;
   }
   HRESULT SetTextureStageState(DWORD, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
-    if (Type == D3DTSS_COLOROP) colorOp = Value;   // args assumed canonical until a game sets them
+    if (Type == D3DTSS_COLOROP) {
+      if (Value == D3DTOP_MODULATE || Value == D3DTOP_SELECTARG1 || Value == D3DTOP_DISABLE) {
+        colorOp = Value;                 // args assumed canonical until a game sets them
+      } else {
+        coverage::unhandled_texture_op(Value);
+        colorOp = D3DTOP_MODULATE;       // fall back so the draw still produces pixels
+      }
+    }
+    return D3D_OK;
+  }
+  HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD) override {
+    // 2.5: nothing implemented yet — every state is unhandled + counted. 2.6
+    // moves depth/blend/cull/alpha-test out of this branch.
+    coverage::unhandled_render_state(State);
     return D3D_OK;
   }
   HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) override {

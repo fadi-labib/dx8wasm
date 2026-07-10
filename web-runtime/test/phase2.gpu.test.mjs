@@ -24,6 +24,7 @@ const SMOKES = [
   ['d3d8_smoke', [51, 102, 204, 255]],   // 0xFF3366CC -> R=51 G=102 B=204
   ['draw_smoke', [51, 204, 102, 255]],   // FVF quad, 0xFF33CC66 -> R=51 G=204 B=102
   ['draw_tex_smoke', [128, 128, 64, 255]], // diffuse(.502,1,1) * texel(1,.502,.251) modulate
+  ['coverage_smoke', [1, 1, 1, 3]],        // 1 unhandled RS/TOP/FMT each, callback fired 3x
 ];
 
 const server = createServer((req, res) => {
