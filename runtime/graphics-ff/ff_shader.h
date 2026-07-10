@@ -15,6 +15,7 @@ struct Program {
   // handles are the base of MAX_LIGHTS-sized arrays; uLightCount bounds the loop.
   GLint uLightCount = -1, uLightType = -1, uLightDir = -1, uLightDiffuse = -1, uLightAmbient = -1;
   GLint uLightPos = -1, uLightAtten = -1, uLightRange = -1;
+  GLint uSpotDir = -1, uSpotParams = -1;   // spot: aim dir; (cosHalfTheta, cosHalfPhi, falloff)
   GLint uGlobalAmbient = -1, uMatDiffuse = -1, uMatAmbient = -1, uMatEmissive = -1;
 };
 // Cached by (FVF, texture color-op, alpha-test func, lit). colorOp is ignored

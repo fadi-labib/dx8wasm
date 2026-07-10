@@ -50,11 +50,13 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   if (lit) vs +=
     "const int MAXL = " + std::to_string(MAX_LIGHTS) + ";\n"
     "uniform int uLightCount;\n"
-    "uniform int uLightType[MAXL];\n"          // 0 = directional, 1 = point
+    "uniform int uLightType[MAXL];\n"          // 0 = directional, 1 = point, 2 = spot
     "uniform vec3 uLightDir[MAXL];\n"          // directional: normalize(-Direction)
-    "uniform vec3 uLightPos[MAXL];\n"          // point: world-space position
+    "uniform vec3 uLightPos[MAXL];\n"          // point/spot: world-space position
     "uniform vec3 uLightAtten[MAXL];\n"        // (a0, a1, a2)
     "uniform float uLightRange[MAXL];\n"
+    "uniform vec3 uSpotDir[MAXL];\n"           // spot: normalize(Direction) (aim)
+    "uniform vec3 uSpotParams[MAXL];\n"        // spot: (cosHalfTheta, cosHalfPhi, falloff)
     "uniform vec4 uLightDiffuse[MAXL];\n"
     "uniform vec4 uLightAmbient[MAXL];\n"
     "uniform vec4 uGlobalAmbient, uMatDiffuse, uMatAmbient, uMatEmissive;\n";
@@ -73,12 +75,18 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     "  for (int i = 0; i < uLightCount; i++) {\n"
     "    vec3 hitDir; float atten;\n"
     "    if (uLightType[i] == 0) { hitDir = uLightDir[i]; atten = 1.0; }\n"
-    "    else {\n"
+    "    else {\n"                                 // point or spot
     "      vec3 d = uLightPos[i] - worldPos; float dist = length(d);\n"
     "      hitDir = dist > 1e-6 ? d / dist : vec3(0.0, 0.0, 1.0);\n"
     "      float a = uLightAtten[i].x + uLightAtten[i].y*dist + uLightAtten[i].z*dist*dist;\n"
     "      atten = a > 0.0 ? 1.0 / a : 1.0;\n"
     "      if (dist > uLightRange[i]) atten = 0.0;\n"
+    "      if (uLightType[i] == 2) {\n"            // spot cone falloff (theta inner, phi outer)
+    "        float rho = dot(-hitDir, uSpotDir[i]);\n"
+    "        float ct = uSpotParams[i].x, cp = uSpotParams[i].y, fo = uSpotParams[i].z;\n"
+    "        float spot = rho <= cp ? 0.0 : (rho >= ct ? 1.0 : pow((rho - cp) / (ct - cp), fo));\n"
+    "        atten *= spot;\n"
+    "      }\n"
     "    }\n"
     "    float ndl = clamp(dot(N, hitDir), 0.0, 1.0) * atten;\n"
     "    dsum += uLightDiffuse[i] * ndl;\n"
@@ -130,6 +138,8 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   prog.uLightPos      = glGetUniformLocation(p, "uLightPos[0]");
   prog.uLightAtten    = glGetUniformLocation(p, "uLightAtten[0]");
   prog.uLightRange    = glGetUniformLocation(p, "uLightRange[0]");
+  prog.uSpotDir       = glGetUniformLocation(p, "uSpotDir[0]");
+  prog.uSpotParams    = glGetUniformLocation(p, "uSpotParams[0]");
   prog.uLightDiffuse  = glGetUniformLocation(p, "uLightDiffuse[0]");
   prog.uLightAmbient  = glGetUniformLocation(p, "uLightAmbient[0]");
   prog.uGlobalAmbient = glGetUniformLocation(p, "uGlobalAmbient");
