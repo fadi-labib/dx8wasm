@@ -122,7 +122,9 @@ struct Device8 : IDirect3DDevice8 {
   float fogColor[3] = {0, 0, 0};
   float fogStart = 0.0f, fogEnd = 1.0f;
 
-  Device8() {
+  float vpW, vpH;   // viewport size, for XYZRHW screen->clip mapping
+
+  Device8(int w, int h) : vpW((float)w), vpH((float)h) {
     set_identity(world); set_identity(view); set_identity(proj);
     glDepthFunc(GL_LEQUAL);   // D3D default ZFUNC is LESSEQUAL (GL default is LESS)
   }
@@ -358,11 +360,12 @@ struct Device8 : IDirect3DDevice8 {
     glUniformMatrix4fv(p->uProj,  1, GL_FALSE, proj);
 
     glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
-    // Attributes are laid out in FVF order: XYZ, NORMAL, DIFFUSE, TEX1. Locations
-    // are fixed (0=pos, 1=diffuse, 2=uv, 3=normal); only the byte offset walks.
+    // Attributes are laid out in FVF order: XYZ[RHW], NORMAL, DIFFUSE, TEX1.
+    // Locations are fixed (0=pos, 1=diffuse, 2=uv, 3=normal); the byte offset walks.
+    const bool rhw = fvf & D3DFVF_XYZRHW;
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)0);
-    GLuint off = 12;
+    glVertexAttribPointer(0, rhw ? 4 : 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)0);
+    GLuint off = rhw ? 16 : 12;
     if (fvf & D3DFVF_NORMAL) {
       glEnableVertexAttribArray(3);
       glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(uintptr_t)off);
@@ -383,6 +386,7 @@ struct Device8 : IDirect3DDevice8 {
       glUniform1i(p->uTex, 0);
     }
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
+    if (rhw) glUniform2f(p->uViewport, vpW, vpH);
     if (lit) set_light_uniforms(p);
     if (fogEnable) {
       glUniform3fv(p->uFogColor, 1, fogColor);
@@ -399,5 +403,5 @@ struct Device8 : IDirect3DDevice8 {
 
 IDirect3DDevice8* dx8_create_device(int w, int h) {
   if (!platform::create_gl_context(w, h)) return nullptr;
-  return new Device8();
+  return new Device8(w, h);
 }

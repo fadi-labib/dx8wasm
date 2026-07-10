@@ -32,6 +32,7 @@ const SMOKES = [
   ['spot_light_smoke', [144, 96, 48, 255]],    // spot inside cone: diffuse(0.6,0.4,0.2) * hitDot 0.943
   ['fog_smoke', [128, 0, 128, 255]],           // linear fog: mix(blue, red, 0.5) at eye-depth 0.5
   ['specular_smoke', [204, 204, 204, 255]],    // Blinn specular N·H=1: matSpec(1) * lightSpec(0.8)
+  ['rhw_smoke', [0, 255, 0, 255]],             // pre-transformed screen-space quad, right-half green
 ];
 
 const server = createServer((req, res) => {

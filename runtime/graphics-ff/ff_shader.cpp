@@ -39,14 +39,16 @@ const char* alpha_cmp(uint32_t func) {
 // (both diffuse attribute and A8R8G8B8 texel), so every color source is read
 // back with a .bgra swizzle to recover RGBA. Matrices are D3D row-major uploaded
 // as-is (GL reads the transpose), hence proj*view*world — correct for D3D.
-Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc, bool lit, bool fog) {
+Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc, bool lit, bool fog, bool rhw) {
   const bool outColor = lit || hasDiffuse;   // vertex emits an interpolated color
-  std::string vs = "#version 300 es\n"
-    "layout(location=0) in vec3 aPos;\n";
+  std::string vs = "#version 300 es\n";
+  vs += rhw ? "layout(location=0) in vec4 aPos;\n"   // pre-transformed: x,y screen px; z depth; w=rhw
+            : "layout(location=0) in vec3 aPos;\n";
   if (hasDiffuse) vs += "layout(location=1) in vec4 aColor;\n";
   if (hasTex)     vs += "layout(location=2) in vec2 aUV;\n";
   if (lit)        vs += "layout(location=3) in vec3 aNormal;\n";
-  vs += "uniform mat4 uWorld, uView, uProj;\n";
+  if (rhw) vs += "uniform vec2 uViewport;\n";
+  else     vs += "uniform mat4 uWorld, uView, uProj;\n";
   if (lit) vs +=
     "const int MAXL = " + std::to_string(MAX_LIGHTS) + ";\n"
     "uniform int uLightCount;\n"
@@ -66,11 +68,19 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   if (fog) vs += "uniform float uFogStart, uFogEnd;\nout float vFog;\n";
   if (outColor) vs += "out vec4 vColor;\n";
   if (hasTex)   vs += "out vec2 vUV;\n";
-  vs += "void main(){ gl_Position = uProj*uView*uWorld*vec4(aPos,1.0);\n";
-  if (fog) vs +=
-    // Linear fog on eye-space depth: 1 = no fog (near), 0 = full fog (far).
-    "  float fz = (uView*uWorld*vec4(aPos,1.0)).z;\n"
-    "  vFog = clamp((uFogEnd - fz) / (uFogEnd - uFogStart), 0.0, 1.0);\n";
+  vs += "void main(){\n";
+  if (rhw) vs +=
+    // Pre-transformed: aPos is in screen pixels (D3D top-left origin), so map to
+    // clip space and flip Y. ponytail: rhw (w) assumed 1 — perspective 2D deferred.
+    "  gl_Position = vec4(aPos.x/uViewport.x*2.0 - 1.0, 1.0 - aPos.y/uViewport.y*2.0, aPos.z*2.0 - 1.0, 1.0);\n";
+  else vs +=
+    "  gl_Position = uProj*uView*uWorld*vec4(aPos,1.0);\n";
+  if (fog) {
+    // Linear fog: 1 = no fog (near), 0 = full fog (far). Pre-transformed vertices
+    // use their supplied depth directly; transformed ones use eye-space depth.
+    vs += rhw ? "  float fz = aPos.z;\n" : "  float fz = (uView*uWorld*vec4(aPos,1.0)).z;\n";
+    vs += "  vFog = clamp((uFogEnd - fz) / (uFogEnd - uFogStart), 0.0, 1.0);\n";
+  }
   if (lit) vs +=
     // D3D fixed-function lighting is per-vertex (Gouraud), accumulated over the
     // enabled lights. Directional: hitDir = -Direction, atten 1. Point: hitDir
@@ -168,6 +178,7 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   prog.uFogColor      = glGetUniformLocation(p, "uFogColor");
   prog.uFogStart      = glGetUniformLocation(p, "uFogStart");
   prog.uFogEnd        = glGetUniformLocation(p, "uFogEnd");
+  prog.uViewport      = glGetUniformLocation(p, "uViewport");
   return prog;
 }
 
@@ -183,16 +194,18 @@ const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, b
   if (it != g_cache.end()) return &it->second;
 
   const bool hasDiffuse = fvf & D3DFVF_DIFFUSE;
-  // ponytail: XYZ base plus optional DIFFUSE/TEX1 with MODULATE|SELECTARG1, or a
-  // lit variant (requires NORMAL, untextured for now). Widen as targets demand.
-  const bool supported = (fvf & D3DFVF_XYZ) &&
+  const bool rhw = fvf & D3DFVF_XYZRHW;   // pre-transformed screen-space vertices
+  // ponytail: XYZ (or XYZRHW) base plus optional DIFFUSE/TEX1 with MODULATE|
+  // SELECTARG1, or a lit variant (requires NORMAL, untextured, non-rhw).
+  const bool supported = (fvf & D3DFVF_XYZ) || rhw;
+  const bool ok = supported &&
       (!hasTex || colorOp == D3DTOP_MODULATE || colorOp == D3DTOP_SELECTARG1) &&
-      (!lit || ((fvf & D3DFVF_NORMAL) && !hasTex));
-  if (!supported) {
+      (!lit || ((fvf & D3DFVF_NORMAL) && !hasTex && !rhw));
+  if (!ok) {
     std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x colorOp %u lit %d\n", fvf, colorOp, (int)lit);
     return nullptr;
   }
-  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp, alphaFunc, lit, fog));
+  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp, alphaFunc, lit, fog, rhw));
   return &r.first->second;
 }
 

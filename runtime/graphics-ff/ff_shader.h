@@ -20,6 +20,7 @@ struct Program {
   GLint uGlobalAmbient = -1, uMatDiffuse = -1, uMatAmbient = -1, uMatEmissive = -1;
   // Linear fog uniforms (valid only on fog programs).
   GLint uFogColor = -1, uFogStart = -1, uFogEnd = -1;
+  GLint uViewport = -1;   // pre-transformed (XYZRHW): screen -> clip mapping
 };
 // Cached by (FVF, texture color-op, alpha-test func, lit). colorOp is ignored
 // without texture coords; alphaFunc == 0 means no alpha test, else it is a
