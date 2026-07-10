@@ -9,8 +9,6 @@
 # Cert:   put cert.pem/key.pem next to this script, or generate:
 #   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 \
 #     -nodes -subj "/CN=localhost" -addext "subjectAltName=IP:<your-ip>,DNS:localhost"
-#
-# SPDX-License-Identifier: MIT
 import http.server, ssl, os, sys
 from functools import partial
 

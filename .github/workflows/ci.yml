@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# dx8wasm CI. Inactive until this repo has a GitHub remote; then it runs on every
+# push/PR. It just invokes scripts/ci.sh — the same guardrails you run locally.
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  guardrails-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # full history for the commit-author guardrail
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install brotli
+
+      # Pinned Emscripten — must match .emscripten-version.
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.2
+
+      - name: Install web-runtime deps
+        run: npm --prefix web-runtime ci
+
+      - name: Install headless Chromium
+        run: npx --prefix web-runtime playwright install --with-deps chromium
+
+      - name: Guardrails + tests
+        run: bash scripts/ci.sh
