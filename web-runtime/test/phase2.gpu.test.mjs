@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Headless GPU smoke: build the wasm smokes, load each in Chromium (SwiftShader),
+// assert the read-back pixel. Ordered gl -> platform -> d3d8 to isolate failures.
+import { execFileSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { statSync, existsSync, writeFileSync, createReadStream } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repo = join(here, '..', '..');
+const buildDir = join(repo, 'build', 'emscripten');
+const MIME = { '.js': 'text/javascript', '.wasm': 'application/wasm', '.html': 'text/html' };
+
+// Build (sources emsdk, runs cmake). Fails the test loudly if the toolchain is missing.
+execFileSync('bash', [join(repo, 'scripts', 'build-wasm.sh')], { stdio: 'inherit' });
+
+// Each smoke: [ jsFile, expectedRGBA ]. Only run those that built.
+const SMOKES = [
+  ['gl_smoke', [51, 102, 153, 255]],
+];
+
+const server = createServer((req, res) => {
+  const p = decodeURIComponent(req.url.split('?')[0]);
+  const file = join(buildDir, p === '/' ? 'index.html' : p);
+  let st; try { st = statSync(file); } catch { res.writeHead(404).end(); return; }
+  res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream',
+    'Content-Length': st.size });
+  createReadStream(file).pipe(res);
+});
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const base = `http://127.0.0.1:${server.address().port}`;
+
+let browser;
+try {
+  browser = await launchChromium();
+  for (const [name, expected] of SMOKES) {
+    assert.ok(existsSync(join(buildDir, `${name}.js`)), `${name}.js was not built`);
+    writeFileSync(join(buildDir, `${name}.html`),
+      `<!doctype html><canvas id=canvas width=4 height=4></canvas>` +
+      `<script>var Module={canvas:document.getElementById('canvas')};</script>` +
+      `<script src="${name}.js"></script>`);
+    const page = await (await browser.newContext()).newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await page.goto(`${base}/${name}.html`);
+    const r = await page.waitForFunction(() => window.__gpu, null, { timeout: 30000 }).then((h) => h.jsonValue());
+    assert.ok(!r.error, `${name}: ${r.error}\n${errors.join('\n')}`);
+    for (let i = 0; i < 4; i++) assert.ok(Math.abs(r.pixel[i] - expected[i]) <= 2,
+      `${name} pixel[${i}] = ${r.pixel[i]}, expected ~${expected[i]}`);
+    console.log(`ok — ${name} cleared to [${r.pixel}]`);
+    await page.close();
+  }
+} finally {
+  await browser?.close();
+  server.close();
+}
+
+async function launchChromium() {
+  const args = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
+  for (const opts of [{}, { channel: 'chrome' }, { executablePath: '/usr/bin/google-chrome' }]) {
+    try { return await chromium.launch({ headless: true, args, ...opts }); } catch { /* next */ }
+  }
+  throw new Error('could not launch Chromium');
+}
