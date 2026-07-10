@@ -15,12 +15,16 @@ echo "[1/3] SPDX headers"
 exts='cpp|cc|c|h|hpp|js|mjs|py|sh|html'
 while IFS= read -r f; do
   case "$f" in vendor/*|*/vendor/*|build/*|*/build/*|node_modules/*|.superpowers/*) continue ;; esac
-  n=$(grep -c 'SPDX-License-Identifier:' "$f" || true)
+  # Match only real header lines — "SPDX-License-Identifier:" followed by a clean
+  # license token. This excludes files (like this one) that merely reference the
+  # string in code, which a naive grep -c would miscount as multiple headers.
+  pat='SPDX-License-Identifier:[[:space:]]*[A-Za-z0-9.+-]+'
+  ids=$(grep -oE "$pat" "$f" | sed 's/.*:[[:space:]]*//' || true)
+  n=$(printf '%s\n' "$ids" | grep -c . || true)
   if [ "$n" -eq 0 ]; then
     note "$f: no SPDX-License-Identifier"
-  elif [ "$n" -gt 1 ]; then
-    u=$(grep 'SPDX-License-Identifier:' "$f" | sed 's/.*SPDX-License-Identifier:[[:space:]]*//' | sort -u | wc -l)
-    [ "$u" -gt 1 ] && note "$f: conflicting SPDX identifiers ($u distinct)"
+  elif [ "$(printf '%s\n' "$ids" | sort -u | grep -c .)" -gt 1 ]; then
+    note "$f: conflicting SPDX identifiers ($(printf '%s\n' "$ids" | sort -u | paste -sd, -))"
   fi
 done < <(git ls-files | grep -E "\.($exts)\$")
 
