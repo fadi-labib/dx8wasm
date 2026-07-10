@@ -10,6 +10,7 @@ struct D3D8 : IDirect3D8 {
   HRESULT CreateDevice(uint32_t, D3DDEVTYPE, HWND, uint32_t,
                        D3DPRESENT_PARAMETERS* pp, IDirect3DDevice8** out) override {
     if (!pp || !out) return D3DERR_INVALIDCALL;
+    *out = nullptr;   // define the out-param on every failure path (foundation ABI)
     IDirect3DDevice8* dev = dx8_create_device((int)pp->BackBufferWidth, (int)pp->BackBufferHeight);
     if (!dev) return D3DERR_INVALIDCALL;
     *out = dev;
