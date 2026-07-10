@@ -45,7 +45,7 @@ coverage counters are mapped onto Generals' surface.
   view/proj matrices; cached by state key.
 - ✔️ Check: draw an untextured colored quad; readback asserts corner + center px.
 
-**2.4 — Textures + one texture-stage combiner**
+**2.4 — Textures + one texture-stage combiner** ✅ (done; `draw_tex_smoke`)
 - `CreateTexture` + `LockRect`/`UnlockRect` upload, `SetTexture`,
   `SetTextureStageState` (`D3DTOP_MODULATE` first).
 - ✔️ Check: textured quad; readback asserts the sampled texel color.

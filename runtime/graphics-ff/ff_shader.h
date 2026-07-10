@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// graphics-ff: generate + cache a fixed-function GLSL program from an FVF code.
-// 2.3 supports XYZ + DIFFUSE; texture/lighting variants grow here in 2.4+.
+// graphics-ff: generate + cache a fixed-function GLSL program from the render
+// state key. 2.3 covered XYZ + DIFFUSE; 2.4 adds a TEX1 sampler + one combiner.
 #ifndef DX8WASM_FF_SHADER_H
 #define DX8WASM_FF_SHADER_H
 #include <cstdint>
@@ -9,10 +9,11 @@
 namespace ff {
 struct Program {
   GLuint prog = 0;
-  GLint uWorld = -1, uView = -1, uProj = -1;
+  GLint uWorld = -1, uView = -1, uProj = -1, uTex = -1;
 };
-// Cached by FVF (the only state-key component until 2.4). Returns nullptr and
-// logs loudly on an FVF we don't yet generate for — never silently wrong.
-const Program* program_for_fvf(uint32_t fvf);
+// Cached by (FVF, texture color-op). colorOp is ignored when the FVF has no
+// texture coords. Returns nullptr and logs loudly on an unsupported combo —
+// never silently wrong.
+const Program* program_for(uint32_t fvf, uint32_t colorOp);
 }
 #endif

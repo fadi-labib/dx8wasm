@@ -3,6 +3,7 @@
 // we implement are declared. Full-ABI/Generals compat is a later task.
 //   2.0-2.2: device + Clear + Present.
 //   2.3:     vertex/index buffers, FVF, transforms, DrawIndexedPrimitive.
+//   2.4:     textures, LockRect upload, SetTexture, one texture-stage combiner.
 #ifndef DX8WASM_D3D8_H
 #define DX8WASM_D3D8_H
 #include <cstdint>
@@ -24,6 +25,7 @@ using BYTE = uint8_t;
 #define D3DFVF_XYZ     0x0002u
 #define D3DFVF_XYZRHW  0x0004u
 #define D3DFVF_DIFFUSE 0x0040u
+#define D3DFVF_TEX1    0x0100u   // one 2D texture-coordinate set
 
 enum D3DDEVTYPE { D3DDEVTYPE_HAL = 1 };
 enum D3DFORMAT { D3DFMT_UNKNOWN = 0, D3DFMT_A8R8G8B8 = 21, D3DFMT_X8R8G8B8 = 22,
@@ -33,9 +35,12 @@ enum D3DPOOL { D3DPOOL_DEFAULT = 0, D3DPOOL_MANAGED = 1 };
 enum D3DPRIMITIVETYPE { D3DPT_TRIANGLELIST = 4 };
 // D3DTS_WORLD is the classic 256 alias for D3DTS_WORLDMATRIX(0).
 enum D3DTRANSFORMSTATETYPE { D3DTS_VIEW = 2, D3DTS_PROJECTION = 3, D3DTS_WORLD = 256 };
+enum D3DTEXTUREOP { D3DTOP_DISABLE = 1, D3DTOP_SELECTARG1 = 2, D3DTOP_MODULATE = 4 };
+enum D3DTEXTURESTAGESTATETYPE { D3DTSS_COLOROP = 1, D3DTSS_COLORARG1 = 2, D3DTSS_COLORARG2 = 3 };
 
 struct D3DRECT { long x1, y1, x2, y2; };
 struct D3DMATRIX { float m[4][4]; };   // row-major, D3D convention
+struct D3DLOCKED_RECT { int32_t Pitch; void* pBits; };
 
 struct D3DPRESENT_PARAMETERS {
   uint32_t BackBufferWidth, BackBufferHeight;
@@ -64,6 +69,14 @@ struct IDirect3DIndexBuffer8 {
   virtual ~IDirect3DIndexBuffer8() = default;
 };
 
+struct IDirect3DTexture8 {
+  virtual uint32_t AddRef() = 0;
+  virtual uint32_t Release() = 0;
+  virtual HRESULT LockRect(UINT Level, D3DLOCKED_RECT* pLockedRect, const D3DRECT* pRect, DWORD Flags) = 0;
+  virtual HRESULT UnlockRect(UINT Level) = 0;
+  virtual ~IDirect3DTexture8() = default;
+};
+
 struct IDirect3DDevice8 {
   virtual uint32_t AddRef() = 0;
   virtual uint32_t Release() = 0;
@@ -82,6 +95,10 @@ struct IDirect3DDevice8 {
   virtual HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) = 0;
   virtual HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE Type, UINT MinIndex, UINT NumVertices,
                                        UINT StartIndex, UINT PrimitiveCount) = 0;
+  virtual HRESULT CreateTexture(UINT Width, UINT Height, UINT Levels, DWORD Usage, D3DFORMAT Format,
+                                D3DPOOL Pool, IDirect3DTexture8** ppTexture) = 0;
+  virtual HRESULT SetTexture(DWORD Stage, IDirect3DTexture8* pTexture) = 0;
+  virtual HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) = 0;
   virtual ~IDirect3DDevice8() = default;
 };
 

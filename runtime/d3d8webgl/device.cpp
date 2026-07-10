@@ -42,6 +42,34 @@ struct IndexBuffer8 : IDirect3DIndexBuffer8 {
   HRESULT Unlock() override { return b.Unlock(); }
 };
 
+// Level-0-only A8R8G8B8 texture. CPU staging holds the D3D [B,G,R,A] bytes;
+// UnlockRect uploads them verbatim as GL_RGBA (the .bgra shader swizzle fixes
+// channel order). Nearest + clamp — no mips/filtering until a target needs them.
+struct Texture8 : IDirect3DTexture8 {
+  uint32_t refs = 1;
+  UINT w, h;
+  std::vector<BYTE> cpu;
+  GLuint tex = 0;
+  Texture8(UINT width, UINT height) : w(width), h(height), cpu((size_t)width * height * 4) {}
+  uint32_t AddRef() override { return ++refs; }
+  uint32_t Release() override { uint32_t r = --refs; if (!r) delete this; return r; }
+  HRESULT LockRect(UINT, D3DLOCKED_RECT* lr, const D3DRECT*, DWORD) override {
+    if (!lr) return D3DERR_INVALIDCALL;
+    lr->Pitch = (int32_t)(w * 4); lr->pBits = cpu.data(); return D3D_OK;
+  }
+  HRESULT UnlockRect(UINT) override {
+    if (!tex) glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei)w, (GLsizei)h, 0, GL_RGBA, GL_UNSIGNED_BYTE, cpu.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    return D3D_OK;
+  }
+  ~Texture8() { if (tex) glDeleteTextures(1, &tex); }
+};
+
 void set_identity(float* m) {
   std::memset(m, 0, 16 * sizeof(float));
   m[0] = m[5] = m[10] = m[15] = 1.0f;
@@ -53,6 +81,8 @@ struct Device8 : IDirect3DDevice8 {
   IndexBuffer8* indices = nullptr;
   UINT stride = 0;
   uint32_t fvf = 0;
+  Texture8* texture = nullptr;              // bound stage-0 texture (not owned)
+  uint32_t colorOp = D3DTOP_MODULATE;       // D3D stage-0 COLOROP default
   float world[16], view[16], proj[16];
 
   Device8() { set_identity(world); set_identity(view); set_identity(proj); }
@@ -93,6 +123,19 @@ struct Device8 : IDirect3DDevice8 {
     indices = static_cast<IndexBuffer8*>(ib); return D3D_OK;
   }
   HRESULT SetVertexShader(DWORD Handle) override { fvf = Handle; return D3D_OK; }
+  HRESULT CreateTexture(UINT Width, UINT Height, UINT, DWORD, D3DFORMAT, D3DPOOL,
+                        IDirect3DTexture8** out) override {
+    if (!out) return D3DERR_INVALIDCALL;
+    *out = new Texture8(Width, Height);
+    return D3D_OK;
+  }
+  HRESULT SetTexture(DWORD, IDirect3DTexture8* t) override {
+    texture = static_cast<Texture8*>(t); return D3D_OK;
+  }
+  HRESULT SetTextureStageState(DWORD, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
+    if (Type == D3DTSS_COLOROP) colorOp = Value;   // args assumed canonical until a game sets them
+    return D3D_OK;
+  }
   HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) override {
     if (!pMatrix) return D3DERR_INVALIDCALL;
     float* dst = State == D3DTS_WORLD ? world : State == D3DTS_VIEW ? view
@@ -104,7 +147,8 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE Type, UINT, UINT, UINT StartIndex,
                                UINT PrimitiveCount) override {
     if (Type != D3DPT_TRIANGLELIST || !stream || !indices) return D3DERR_INVALIDCALL;
-    const ff::Program* p = ff::program_for_fvf(fvf);
+    const bool textured = (fvf & D3DFVF_TEX1) && texture;
+    const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE);
     if (!p) return D3DERR_INVALIDCALL;
 
     glUseProgram(p->prog);
@@ -115,12 +159,24 @@ struct Device8 : IDirect3DDevice8 {
     glUniformMatrix4fv(p->uProj,  1, GL_FALSE, proj);
 
     glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
-    // ponytail: fixed XYZ@0 + DIFFUSE@12 layout; derive from FVF when more formats land.
+    // ponytail: fixed XYZ@0, DIFFUSE@12, TEX1@16 layout; derive offsets from FVF
+    // when non-{XYZ,DIFFUSE,TEX1} formats actually appear.
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)0);
+    GLuint off = 12;
     if (fvf & D3DFVF_DIFFUSE) {
       glEnableVertexAttribArray(1);
-      glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, (GLsizei)stride, (void*)12);
+      glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, (GLsizei)stride, (void*)(uintptr_t)off);
+      off += 4;
+    } else glDisableVertexAttribArray(1);
+    if (fvf & D3DFVF_TEX1) {
+      glEnableVertexAttribArray(2);
+      glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(uintptr_t)off);
+    } else glDisableVertexAttribArray(2);
+    if (textured) {
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, texture->tex);
+      glUniform1i(p->uTex, 0);
     }
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices->b.glbuf);
     glDrawElements(GL_TRIANGLES, (GLsizei)(PrimitiveCount * 3), GL_UNSIGNED_SHORT,
