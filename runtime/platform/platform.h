@@ -7,5 +7,6 @@ namespace platform {
 bool create_gl_context(int width, int height);
 void present();               // swap/commit the backbuffer
 void destroy_gl_context();
+bool gl_context_alive();      // false once destroyed — guards late GL object deletes
 }
 #endif

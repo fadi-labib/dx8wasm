@@ -47,6 +47,9 @@ int main() {
   dev->SetStreamSource(0, vb, sizeof(Vertex));
   dev->SetIndices(ib, 0);
   dev->SetVertexShader(D3DFVF_XYZ | D3DFVF_DIFFUSE);
+  // Drop our handles right after binding — a legal D3D8 idiom. The device must
+  // hold its own ref (Set* AddRefs), or the draw below is a use-after-free.
+  vb->Release(); ib->Release();
 
   dev->Clear(0, nullptr, D3DCLEAR_TARGET, 0xFF3366CCu /* distinct blue background */, 1.0f, 0);
   if (dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 4, 0, 2) != D3D_OK) {
@@ -62,6 +65,6 @@ int main() {
   }
   report_pixel(center[0], center[1], center[2], center[3]);
 
-  ib->Release(); vb->Release(); dev->Release(); d3d->Release();
+  dev->Release(); d3d->Release();   // vb/ib already released above; device drops its bound refs
   return 0;
 }

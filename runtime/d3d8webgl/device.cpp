@@ -15,14 +15,17 @@ struct GLBuffer {
   std::vector<BYTE> cpu;
   GLuint glbuf = 0;
   explicit GLBuffer(GLenum t, UINT length) : target(t), cpu(length) {}
-  HRESULT Lock(UINT off, UINT, BYTE** pp) { *pp = cpu.data() + off; return D3D_OK; }
+  HRESULT Lock(UINT off, UINT, BYTE** pp) {
+    if (!pp) return D3DERR_INVALIDCALL;
+    *pp = cpu.data() + off; return D3D_OK;
+  }
   HRESULT Unlock() {
     if (!glbuf) glGenBuffers(1, &glbuf);
     glBindBuffer(target, glbuf);
     glBufferData(target, (GLsizeiptr)cpu.size(), cpu.data(), GL_STATIC_DRAW);
     return D3D_OK;
   }
-  ~GLBuffer() { if (glbuf) glDeleteBuffers(1, &glbuf); }
+  ~GLBuffer() { if (glbuf && platform::gl_context_alive()) glDeleteBuffers(1, &glbuf); }
 };
 
 struct VertexBuffer8 : IDirect3DVertexBuffer8 {
@@ -68,7 +71,7 @@ struct Texture8 : IDirect3DTexture8 {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     return D3D_OK;
   }
-  ~Texture8() { if (tex) glDeleteTextures(1, &tex); }
+  ~Texture8() { if (tex && platform::gl_context_alive()) glDeleteTextures(1, &tex); }
 };
 
 void set_identity(float* m) {
@@ -96,6 +99,7 @@ struct Device8 : IDirect3DDevice8 {
   uint32_t colorOp = D3DTOP_MODULATE;       // D3D stage-0 COLOROP default
   GLenum srcBlend = GL_ONE, dstBlend = GL_ZERO;   // D3D blend defaults
   bool alphaTestEnable = false;
+  bool zWrite = true;                             // tracks D3DRS_ZWRITEENABLE
   uint32_t alphaFunc = D3DCMP_ALWAYS;
   DWORD alphaRef = 0;
   float world[16], view[16], proj[16];
@@ -106,7 +110,19 @@ struct Device8 : IDirect3DDevice8 {
   }
 
   uint32_t AddRef() override { return ++refs; }
-  uint32_t Release() override { uint32_t r = --refs; if (!r) { platform::destroy_gl_context(); delete this; } return r; }
+  uint32_t Release() override {
+    uint32_t r = --refs;
+    if (!r) {
+      // Drop the refs taken by Set{StreamSource,Indices,Texture} while the GL
+      // context is still alive, so any GL objects they own are deleted cleanly.
+      if (stream) stream->Release();
+      if (indices) indices->Release();
+      if (texture) texture->Release();
+      platform::destroy_gl_context();
+      delete this;
+    }
+    return r;
+  }
 
   HRESULT Clear(uint32_t, const D3DRECT*, uint32_t Flags, D3DCOLOR c, float, uint32_t) override {
     GLbitfield mask = 0;
@@ -115,8 +131,12 @@ struct Device8 : IDirect3DDevice8 {
                    (c & 0xff) / 255.0f, ((c >> 24) & 0xff) / 255.0f);
       mask |= GL_COLOR_BUFFER_BIT;
     }
-    if (Flags & D3DCLEAR_ZBUFFER) mask |= GL_DEPTH_BUFFER_BIT;
+    if (Flags & D3DCLEAR_ZBUFFER) {
+      glDepthMask(GL_TRUE);   // D3D Clear ignores ZWRITEENABLE; glClear obeys the mask
+      mask |= GL_DEPTH_BUFFER_BIT;
+    }
     glClear(mask);
+    if (Flags & D3DCLEAR_ZBUFFER) glDepthMask(zWrite ? GL_TRUE : GL_FALSE);   // restore app state
     return D3D_OK;
   }
   HRESULT Present(const D3DRECT*, const D3DRECT*, HWND, const void*) override {
@@ -134,11 +154,23 @@ struct Device8 : IDirect3DDevice8 {
     *out = new IndexBuffer8(Length);
     return D3D_OK;
   }
+  // Set* takes a reference on the bound resource (D3D8 contract), so a game may
+  // Release its own handle right after binding. AddRef the new before releasing
+  // the old to stay correct when they are the same object.
   HRESULT SetStreamSource(UINT, IDirect3DVertexBuffer8* vb, UINT Stride) override {
-    stream = static_cast<VertexBuffer8*>(vb); stride = Stride; return D3D_OK;
+    auto* n = static_cast<VertexBuffer8*>(vb);
+    if (n) n->AddRef();
+    if (stream) stream->Release();
+    stream = n; stride = Stride; return D3D_OK;
   }
+  // ponytail: BaseVertexIndex ignored (assumed 0). GLES3 has no base-vertex draw;
+  // batched meshes that rely on it need base*stride added to the attrib offsets —
+  // implement + test when a target game actually uses nonzero base vertices.
   HRESULT SetIndices(IDirect3DIndexBuffer8* ib, UINT) override {
-    indices = static_cast<IndexBuffer8*>(ib); return D3D_OK;
+    auto* n = static_cast<IndexBuffer8*>(ib);
+    if (n) n->AddRef();
+    if (indices) indices->Release();
+    indices = n; return D3D_OK;
   }
   HRESULT SetVertexShader(DWORD Handle) override { fvf = Handle; return D3D_OK; }
   HRESULT CreateTexture(UINT Width, UINT Height, UINT, DWORD, D3DFORMAT Format, D3DPOOL,
@@ -151,7 +183,10 @@ struct Device8 : IDirect3DDevice8 {
     return D3D_OK;
   }
   HRESULT SetTexture(DWORD, IDirect3DTexture8* t) override {
-    texture = static_cast<Texture8*>(t); return D3D_OK;
+    auto* n = static_cast<Texture8*>(t);
+    if (n) n->AddRef();
+    if (texture) texture->Release();
+    texture = n; return D3D_OK;
   }
   HRESULT SetTextureStageState(DWORD, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
     if (Type == D3DTSS_COLOROP) {
@@ -167,7 +202,7 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) override {
     switch (State) {
       case D3DRS_ZENABLE:         Value ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST); break;
-      case D3DRS_ZWRITEENABLE:    glDepthMask(Value ? GL_TRUE : GL_FALSE); break;
+      case D3DRS_ZWRITEENABLE:    zWrite = Value != 0; glDepthMask(zWrite ? GL_TRUE : GL_FALSE); break;
       case D3DRS_ALPHABLENDENABLE: Value ? glEnable(GL_BLEND) : glDisable(GL_BLEND); break;
       case D3DRS_SRCBLEND:        srcBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
       case D3DRS_DESTBLEND:       dstBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;

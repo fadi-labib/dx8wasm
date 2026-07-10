@@ -22,6 +22,7 @@ bool create_gl_context(int width, int height) {
   return SDL_GL_MakeCurrent(g_window, g_ctx);
 }
 void present() { if (g_window) SDL_GL_SwapWindow(g_window); }
+bool gl_context_alive() { return g_ctx != nullptr; }
 void destroy_gl_context() {
   if (g_ctx) { SDL_GL_DestroyContext(g_ctx); g_ctx = nullptr; }
   if (g_window) { SDL_DestroyWindow(g_window); g_window = nullptr; }
