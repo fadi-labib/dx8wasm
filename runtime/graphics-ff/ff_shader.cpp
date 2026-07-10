@@ -39,21 +39,38 @@ const char* alpha_cmp(uint32_t func) {
 // (both diffuse attribute and A8R8G8B8 texel), so every color source is read
 // back with a .bgra swizzle to recover RGBA. Matrices are D3D row-major uploaded
 // as-is (GL reads the transpose), hence proj*view*world — correct for D3D.
-Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc) {
+Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc, bool lit) {
+  const bool outColor = lit || hasDiffuse;   // vertex emits an interpolated color
   std::string vs = "#version 300 es\n"
     "layout(location=0) in vec3 aPos;\n";
   if (hasDiffuse) vs += "layout(location=1) in vec4 aColor;\n";
   if (hasTex)     vs += "layout(location=2) in vec2 aUV;\n";
+  if (lit)        vs += "layout(location=3) in vec3 aNormal;\n";
   vs += "uniform mat4 uWorld, uView, uProj;\n";
-  if (hasDiffuse) vs += "out vec4 vColor;\n";
-  if (hasTex)     vs += "out vec2 vUV;\n";
+  if (lit) vs +=
+    "uniform vec3 uLightDir;\n"
+    "uniform vec4 uLightDiffuse, uLightAmbient, uGlobalAmbient;\n"
+    "uniform vec4 uMatDiffuse, uMatAmbient, uMatEmissive;\n";
+  if (outColor) vs += "out vec4 vColor;\n";
+  if (hasTex)   vs += "out vec2 vUV;\n";
   vs += "void main(){ gl_Position = uProj*uView*uWorld*vec4(aPos,1.0);\n";
-  if (hasDiffuse) vs += "  vColor = aColor.bgra;\n";
-  if (hasTex)     vs += "  vUV = aUV;\n";
+  if (lit) vs +=
+    // D3D fixed-function lighting is per-vertex (Gouraud). Single directional
+    // light, atten 1. ponytail: object-space normal (identity world so far); a
+    // proper inverse-transpose normal matrix lands when non-identity world is used.
+    "  vec3 N = normalize(aNormal);\n"
+    "  float ndl = clamp(dot(N, uLightDir), 0.0, 1.0);\n"
+    "  vec4 c = uMatEmissive + uMatAmbient*uGlobalAmbient + uMatAmbient*uLightAmbient + uMatDiffuse*uLightDiffuse*ndl;\n"
+    "  c.a = uMatDiffuse.a;\n"
+    "  vColor = clamp(c, 0.0, 1.0);\n";
+  else if (hasDiffuse) vs += "  vColor = aColor.bgra;\n";
+  if (hasTex) vs += "  vUV = aUV;\n";
   vs += "}\n";
 
   std::string color;
-  if (hasTex) {
+  if (lit) {
+    color = "vColor";   // material/light already combined per-vertex
+  } else if (hasTex) {
     const char* tex = "texture(uTex, vUV).bgra";
     if (colorOp == D3DTOP_SELECTARG1)          color = tex;                        // texture only
     else /* MODULATE (D3D stage-0 default) */  color = hasDiffuse ? std::string("vColor * ") + tex : tex;
@@ -62,8 +79,8 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   }
 
   std::string fs = "#version 300 es\nprecision mediump float;\n";
-  if (hasDiffuse) fs += "in vec4 vColor;\n";
-  if (hasTex)     fs += "in vec2 vUV;\nuniform sampler2D uTex;\n";
+  if (outColor) fs += "in vec4 vColor;\n";
+  if (hasTex)   fs += "in vec2 vUV;\nuniform sampler2D uTex;\n";
   const bool alphaTest = alphaFunc != 0 && alphaFunc != D3DCMP_ALWAYS;
   if (alphaTest) fs += "uniform float uAlphaRef;\n";
   fs += "out vec4 frag;\nvoid main(){ vec4 c = " + color + ";\n";
@@ -83,29 +100,38 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   prog.uProj     = glGetUniformLocation(p, "uProj");
   prog.uTex      = glGetUniformLocation(p, "uTex");
   prog.uAlphaRef = glGetUniformLocation(p, "uAlphaRef");
+  prog.uLightDir      = glGetUniformLocation(p, "uLightDir");
+  prog.uLightDiffuse  = glGetUniformLocation(p, "uLightDiffuse");
+  prog.uLightAmbient  = glGetUniformLocation(p, "uLightAmbient");
+  prog.uGlobalAmbient = glGetUniformLocation(p, "uGlobalAmbient");
+  prog.uMatDiffuse    = glGetUniformLocation(p, "uMatDiffuse");
+  prog.uMatAmbient    = glGetUniformLocation(p, "uMatAmbient");
+  prog.uMatEmissive   = glGetUniformLocation(p, "uMatEmissive");
   return prog;
 }
 
 } // namespace
 
-const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc) {
+const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, bool lit) {
   const bool hasTex = fvf & D3DFVF_TEX1;
   if (!hasTex) colorOp = 0;   // op is irrelevant without a texture — collapse the key
-  const uint64_t key = ((uint64_t)alphaFunc << 40) | ((uint64_t)colorOp << 20) | fvf;
+  const uint64_t key = ((uint64_t)lit << 48) | ((uint64_t)alphaFunc << 40) |
+                       ((uint64_t)colorOp << 20) | fvf;
 
   auto it = g_cache.find(key);
   if (it != g_cache.end()) return &it->second;
 
   const bool hasDiffuse = fvf & D3DFVF_DIFFUSE;
-  // ponytail: XYZ base plus optional DIFFUSE/TEX1 with MODULATE|SELECTARG1.
-  // Widen the guard as new FVFs / combiners actually appear in a target game.
+  // ponytail: XYZ base plus optional DIFFUSE/TEX1 with MODULATE|SELECTARG1, or a
+  // lit variant (requires NORMAL, untextured for now). Widen as targets demand.
   const bool supported = (fvf & D3DFVF_XYZ) &&
-      (!hasTex || colorOp == D3DTOP_MODULATE || colorOp == D3DTOP_SELECTARG1);
+      (!hasTex || colorOp == D3DTOP_MODULATE || colorOp == D3DTOP_SELECTARG1) &&
+      (!lit || ((fvf & D3DFVF_NORMAL) && !hasTex));
   if (!supported) {
-    std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x colorOp %u\n", fvf, colorOp);
+    std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x colorOp %u lit %d\n", fvf, colorOp, (int)lit);
     return nullptr;
   }
-  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp, alphaFunc));
+  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp, alphaFunc, lit));
   return &r.first->second;
 }
 

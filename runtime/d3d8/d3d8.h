@@ -4,6 +4,7 @@
 //   2.0-2.2: device + Clear + Present.
 //   2.3:     vertex/index buffers, FVF, transforms, DrawIndexedPrimitive.
 //   2.4:     textures, LockRect upload, SetTexture, one texture-stage combiner.
+//   3.1:     FVF normal, directional light, material, per-vertex FF lighting.
 #ifndef DX8WASM_D3D8_H
 #define DX8WASM_D3D8_H
 #include <cstdint>
@@ -14,6 +15,7 @@ using HWND = void*;
 using DWORD = uint32_t;
 using UINT = uint32_t;
 using BYTE = uint8_t;
+using BOOL = int32_t;
 #define D3D_OK 0
 #define D3DERR_INVALIDCALL ((HRESULT)0x8876086cL)
 #define D3D_SDK_VERSION 220
@@ -24,6 +26,7 @@ using BYTE = uint8_t;
 // Flexible vertex format bits (subset).
 #define D3DFVF_XYZ     0x0002u
 #define D3DFVF_XYZRHW  0x0004u
+#define D3DFVF_NORMAL  0x0010u
 #define D3DFVF_DIFFUSE 0x0040u
 #define D3DFVF_TEX1    0x0100u   // one 2D texture-coordinate set
 
@@ -43,16 +46,33 @@ enum D3DTEXTURESTAGESTATETYPE { D3DTSS_COLOROP = 1, D3DTSS_COLORARG1 = 2, D3DTSS
 enum D3DRENDERSTATETYPE {
   D3DRS_ZENABLE = 7, D3DRS_FILLMODE = 8, D3DRS_ZWRITEENABLE = 14, D3DRS_ALPHATESTENABLE = 15,
   D3DRS_SRCBLEND = 19, D3DRS_DESTBLEND = 20, D3DRS_CULLMODE = 22, D3DRS_ALPHAREF = 24,
-  D3DRS_ALPHAFUNC = 25, D3DRS_ALPHABLENDENABLE = 27, D3DRS_FOGENABLE = 28
+  D3DRS_ALPHAFUNC = 25, D3DRS_ALPHABLENDENABLE = 27, D3DRS_FOGENABLE = 28,
+  D3DRS_LIGHTING = 137, D3DRS_AMBIENT = 139
 };
 enum D3DBLEND { D3DBLEND_ZERO = 1, D3DBLEND_ONE = 2, D3DBLEND_SRCALPHA = 5, D3DBLEND_INVSRCALPHA = 6 };
 enum D3DCULL { D3DCULL_NONE = 1, D3DCULL_CW = 2, D3DCULL_CCW = 3 };
 enum D3DCMPFUNC { D3DCMP_NEVER = 1, D3DCMP_LESS = 2, D3DCMP_EQUAL = 3, D3DCMP_LESSEQUAL = 4,
                   D3DCMP_GREATER = 5, D3DCMP_NOTEQUAL = 6, D3DCMP_GREATEREQUAL = 7, D3DCMP_ALWAYS = 8 };
 
+enum D3DLIGHTTYPE { D3DLIGHT_POINT = 1, D3DLIGHT_SPOT = 2, D3DLIGHT_DIRECTIONAL = 3 };
+
 struct D3DRECT { long x1, y1, x2, y2; };
 struct D3DMATRIX { float m[4][4]; };   // row-major, D3D convention
 struct D3DLOCKED_RECT { int32_t Pitch; void* pBits; };
+struct D3DVECTOR { float x, y, z; };
+struct D3DCOLORVALUE { float r, g, b, a; };
+
+struct D3DLIGHT8 {
+  D3DLIGHTTYPE Type;
+  D3DCOLORVALUE Diffuse, Specular, Ambient;
+  D3DVECTOR Position, Direction;
+  float Range, Falloff, Attenuation0, Attenuation1, Attenuation2, Theta, Phi;
+};
+
+struct D3DMATERIAL8 {
+  D3DCOLORVALUE Diffuse, Ambient, Specular, Emissive;
+  float Power;
+};
 
 struct D3DPRESENT_PARAMETERS {
   uint32_t BackBufferWidth, BackBufferHeight;
@@ -112,6 +132,9 @@ struct IDirect3DDevice8 {
   virtual HRESULT SetTexture(DWORD Stage, IDirect3DTexture8* pTexture) = 0;
   virtual HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) = 0;
   virtual HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) = 0;
+  virtual HRESULT SetLight(DWORD Index, const D3DLIGHT8* pLight) = 0;
+  virtual HRESULT LightEnable(DWORD Index, BOOL Enable) = 0;
+  virtual HRESULT SetMaterial(const D3DMATERIAL8* pMaterial) = 0;
   virtual ~IDirect3DDevice8() = default;
 };
 

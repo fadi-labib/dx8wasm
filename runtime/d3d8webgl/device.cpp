@@ -4,6 +4,7 @@
 #include "graphics-ff/ff_shader.h"
 #include "coverage/coverage.h"
 #include <GLES3/gl3.h>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -103,6 +104,13 @@ struct Device8 : IDirect3DDevice8 {
   uint32_t alphaFunc = D3DCMP_ALWAYS;
   DWORD alphaRef = 0;
   float world[16], view[16], proj[16];
+
+  // Fixed-function lighting state (single directional light 0 for slice 3.1).
+  bool lighting = false;                          // D3DRS_LIGHTING (see roadmap: default diverges from D3D's TRUE)
+  float globalAmbient[4] = {0, 0, 0, 0};          // D3DRS_AMBIENT
+  D3DLIGHT8 light0{};
+  bool light0On = false;
+  D3DMATERIAL8 material{ {1, 1, 1, 1}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}, 0 };
 
   Device8() {
     set_identity(world); set_identity(view); set_identity(proj);
@@ -210,8 +218,31 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_ALPHATESTENABLE: alphaTestEnable = Value != 0; break;
       case D3DRS_ALPHAREF:        alphaRef = Value; break;
       case D3DRS_ALPHAFUNC:       alphaFunc = Value; break;
+      case D3DRS_LIGHTING:        lighting = Value != 0; break;
+      case D3DRS_AMBIENT:         // D3DCOLOR 0xAARRGGBB -> linear RGBA
+        globalAmbient[0] = ((Value >> 16) & 0xff) / 255.0f;
+        globalAmbient[1] = ((Value >> 8) & 0xff) / 255.0f;
+        globalAmbient[2] = (Value & 0xff) / 255.0f;
+        globalAmbient[3] = ((Value >> 24) & 0xff) / 255.0f;
+        break;
       default:                    coverage::unhandled_render_state(State); break;
     }
+    return D3D_OK;
+  }
+  // ponytail: only light index 0 is stored; multi-light accumulation grows when
+  // a target game uses more than one enabled light.
+  HRESULT SetLight(DWORD Index, const D3DLIGHT8* p) override {
+    if (!p) return D3DERR_INVALIDCALL;
+    if (Index == 0) light0 = *p;
+    return D3D_OK;
+  }
+  HRESULT LightEnable(DWORD Index, BOOL Enable) override {
+    if (Index == 0) light0On = Enable != 0;
+    return D3D_OK;
+  }
+  HRESULT SetMaterial(const D3DMATERIAL8* p) override {
+    if (!p) return D3DERR_INVALIDCALL;
+    material = *p;
     return D3D_OK;
   }
   // ponytail: NDC winding == GL winding here (no D3D Y-flip projection yet), so
@@ -222,6 +253,29 @@ struct Device8 : IDirect3DDevice8 {
     glEnable(GL_CULL_FACE);
     glFrontFace(GL_CCW);
     glCullFace(mode == D3DCULL_CCW ? GL_FRONT : GL_BACK);
+  }
+  // Upload the fixed-function lighting uniforms. Directional light: the vector to
+  // the light is normalize(-Direction), atten 1 (per DXVK d3d9_fixed_function).
+  // A disabled light contributes zero, leaving material emissive + global ambient.
+  void set_light_uniforms(const ff::Program* p) {
+    float ldir[3] = {0, 0, 1};
+    const float zero[4] = {0, 0, 0, 0};
+    const float* ldiff = zero;
+    const float* lamb = zero;
+    if (light0On) {
+      float dx = -light0.Direction.x, dy = -light0.Direction.y, dz = -light0.Direction.z;
+      float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+      if (len > 1e-6f) { ldir[0] = dx / len; ldir[1] = dy / len; ldir[2] = dz / len; }
+      ldiff = &light0.Diffuse.r;
+      lamb  = &light0.Ambient.r;
+    }
+    glUniform3fv(p->uLightDir, 1, ldir);
+    glUniform4fv(p->uLightDiffuse, 1, ldiff);
+    glUniform4fv(p->uLightAmbient, 1, lamb);
+    glUniform4fv(p->uGlobalAmbient, 1, globalAmbient);
+    glUniform4fv(p->uMatDiffuse, 1, &material.Diffuse.r);
+    glUniform4fv(p->uMatAmbient, 1, &material.Ambient.r);
+    glUniform4fv(p->uMatEmissive, 1, &material.Emissive.r);
   }
   HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) override {
     if (!pMatrix) return D3DERR_INVALIDCALL;
@@ -235,8 +289,9 @@ struct Device8 : IDirect3DDevice8 {
                                UINT PrimitiveCount) override {
     if (Type != D3DPT_TRIANGLELIST || !stream || !indices) return D3DERR_INVALIDCALL;
     const bool textured = (fvf & D3DFVF_TEX1) && texture;
+    const bool lit = lighting && (fvf & D3DFVF_NORMAL);
     const uint32_t af = alphaTestEnable ? alphaFunc : 0;
-    const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af);
+    const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af, lit);
     if (!p) return D3DERR_INVALIDCALL;
 
     glUseProgram(p->prog);
@@ -247,11 +302,16 @@ struct Device8 : IDirect3DDevice8 {
     glUniformMatrix4fv(p->uProj,  1, GL_FALSE, proj);
 
     glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
-    // ponytail: fixed XYZ@0, DIFFUSE@12, TEX1@16 layout; derive offsets from FVF
-    // when non-{XYZ,DIFFUSE,TEX1} formats actually appear.
+    // Attributes are laid out in FVF order: XYZ, NORMAL, DIFFUSE, TEX1. Locations
+    // are fixed (0=pos, 1=diffuse, 2=uv, 3=normal); only the byte offset walks.
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)0);
     GLuint off = 12;
+    if (fvf & D3DFVF_NORMAL) {
+      glEnableVertexAttribArray(3);
+      glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(uintptr_t)off);
+      off += 12;
+    } else glDisableVertexAttribArray(3);
     if (fvf & D3DFVF_DIFFUSE) {
       glEnableVertexAttribArray(1);
       glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, (GLsizei)stride, (void*)(uintptr_t)off);
@@ -267,6 +327,7 @@ struct Device8 : IDirect3DDevice8 {
       glUniform1i(p->uTex, 0);
     }
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
+    if (lit) set_light_uniforms(p);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices->b.glbuf);
     glDrawElements(GL_TRIANGLES, (GLsizei)(PrimitiveCount * 3), GL_UNSIGNED_SHORT,
                    (void*)(uintptr_t)(StartIndex * sizeof(uint16_t)));
