@@ -59,7 +59,10 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     "uniform vec3 uSpotParams[MAXL];\n"        // spot: (cosHalfTheta, cosHalfPhi, falloff)
     "uniform vec4 uLightDiffuse[MAXL];\n"
     "uniform vec4 uLightAmbient[MAXL];\n"
-    "uniform vec4 uGlobalAmbient, uMatDiffuse, uMatAmbient, uMatEmissive;\n";
+    "uniform vec4 uLightSpecular[MAXL];\n"
+    "uniform vec4 uGlobalAmbient, uMatDiffuse, uMatAmbient, uMatEmissive, uMatSpecular;\n"
+    "uniform int uSpecularEnable;\n"
+    "uniform float uMatPower;\n";
   if (fog) vs += "uniform float uFogStart, uFogEnd;\nout float vFog;\n";
   if (outColor) vs += "out vec4 vColor;\n";
   if (hasTex)   vs += "out vec2 vUV;\n";
@@ -76,7 +79,7 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     // inverse-transpose normal matrix lands when non-uniform-scale world is used.
     "  vec3 N = normalize(aNormal);\n"
     "  vec3 worldPos = (uWorld * vec4(aPos, 1.0)).xyz;\n"
-    "  vec4 dsum = vec4(0.0), asum = vec4(0.0);\n"
+    "  vec4 dsum = vec4(0.0), asum = vec4(0.0), ssum = vec4(0.0);\n"
     "  for (int i = 0; i < uLightCount; i++) {\n"
     "    vec3 hitDir; float atten;\n"
     "    if (uLightType[i] == 0) { hitDir = uLightDir[i]; atten = 1.0; }\n"
@@ -93,11 +96,16 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     "        atten *= spot;\n"
     "      }\n"
     "    }\n"
-    "    float ndl = clamp(dot(N, hitDir), 0.0, 1.0) * atten;\n"
-    "    dsum += uLightDiffuse[i] * ndl;\n"
+    "    float nl = dot(N, hitDir);\n"
+    "    dsum += uLightDiffuse[i] * (clamp(nl, 0.0, 1.0) * atten);\n"
     "    asum += uLightAmbient[i] * atten;\n"
+    "    if (uSpecularEnable != 0 && nl > 0.0) {\n"       // Blinn half-vector, infinite viewer V=+Z
+    "      vec3 H = normalize(hitDir + vec3(0.0, 0.0, 1.0));\n"
+    "      ssum += uLightSpecular[i] * (pow(max(dot(N, H), 0.0), uMatPower) * atten);\n"
+    "    }\n"
     "  }\n"
     "  vec4 c = uMatEmissive + uMatAmbient*(uGlobalAmbient + asum) + uMatDiffuse*dsum;\n"
+    "  c.rgb += (uMatSpecular * ssum).rgb;\n"
     "  c.a = uMatDiffuse.a;\n"
     "  vColor = clamp(c, 0.0, 1.0);\n";
   else if (hasDiffuse) vs += "  vColor = aColor.bgra;\n";
@@ -149,6 +157,10 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   prog.uSpotParams    = glGetUniformLocation(p, "uSpotParams[0]");
   prog.uLightDiffuse  = glGetUniformLocation(p, "uLightDiffuse[0]");
   prog.uLightAmbient  = glGetUniformLocation(p, "uLightAmbient[0]");
+  prog.uLightSpecular = glGetUniformLocation(p, "uLightSpecular[0]");
+  prog.uSpecularEnable = glGetUniformLocation(p, "uSpecularEnable");
+  prog.uMatSpecular   = glGetUniformLocation(p, "uMatSpecular");
+  prog.uMatPower      = glGetUniformLocation(p, "uMatPower");
   prog.uGlobalAmbient = glGetUniformLocation(p, "uGlobalAmbient");
   prog.uMatDiffuse    = glGetUniformLocation(p, "uMatDiffuse");
   prog.uMatAmbient    = glGetUniformLocation(p, "uMatAmbient");

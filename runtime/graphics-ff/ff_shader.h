@@ -14,8 +14,9 @@ struct Program {
   // Fixed-function lighting uniforms (valid only on lit programs). The uLight*
   // handles are the base of MAX_LIGHTS-sized arrays; uLightCount bounds the loop.
   GLint uLightCount = -1, uLightType = -1, uLightDir = -1, uLightDiffuse = -1, uLightAmbient = -1;
-  GLint uLightPos = -1, uLightAtten = -1, uLightRange = -1;
+  GLint uLightPos = -1, uLightAtten = -1, uLightRange = -1, uLightSpecular = -1;
   GLint uSpotDir = -1, uSpotParams = -1;   // spot: aim dir; (cosHalfTheta, cosHalfPhi, falloff)
+  GLint uSpecularEnable = -1, uMatSpecular = -1, uMatPower = -1;   // Blinn specular (uniform-gated)
   GLint uGlobalAmbient = -1, uMatDiffuse = -1, uMatAmbient = -1, uMatEmissive = -1;
   // Linear fog uniforms (valid only on fog programs).
   GLint uFogColor = -1, uFogStart = -1, uFogEnd = -1;

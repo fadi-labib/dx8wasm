@@ -110,6 +110,7 @@ struct Device8 : IDirect3DDevice8 {
 
   // Fixed-function lighting state (up to MAX_LIGHTS, directional only for now).
   bool lighting = false;                          // D3DRS_LIGHTING (see roadmap: default diverges from D3D's TRUE)
+  bool specularEnable = false;                    // D3DRS_SPECULARENABLE
   float globalAmbient[4] = {0, 0, 0, 0};          // D3DRS_AMBIENT
   D3DLIGHT8 lights[ff::MAX_LIGHTS]{};
   bool lightOn[ff::MAX_LIGHTS] = {false};
@@ -228,6 +229,7 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_ALPHAREF:        alphaRef = Value; break;
       case D3DRS_ALPHAFUNC:       alphaFunc = Value; break;
       case D3DRS_LIGHTING:        lighting = Value != 0; break;
+      case D3DRS_SPECULARENABLE:  specularEnable = Value != 0; break;
       case D3DRS_FOGENABLE:       fogEnable = Value != 0; break;
       case D3DRS_FOGSTART:        fogStart = as_float(Value); break;
       case D3DRS_FOGEND:          fogEnd = as_float(Value); break;
@@ -283,7 +285,7 @@ struct Device8 : IDirect3DDevice8 {
     int type[ff::MAX_LIGHTS];
     float dir[ff::MAX_LIGHTS * 3], pos[ff::MAX_LIGHTS * 3], atten[ff::MAX_LIGHTS * 3];
     float spotDir[ff::MAX_LIGHTS * 3], spotParams[ff::MAX_LIGHTS * 3];
-    float range[ff::MAX_LIGHTS], diff[ff::MAX_LIGHTS * 4], amb[ff::MAX_LIGHTS * 4];
+    float range[ff::MAX_LIGHTS], diff[ff::MAX_LIGHTS * 4], amb[ff::MAX_LIGHTS * 4], spec[ff::MAX_LIGHTS * 4];
     int count = 0;
     for (int i = 0; i < ff::MAX_LIGHTS; i++) {
       const D3DLIGHT8& L = lights[i];
@@ -307,6 +309,7 @@ struct Device8 : IDirect3DDevice8 {
       spotParams[count * 3 + 2] = L.Falloff;
       std::memcpy(&diff[count * 4], &L.Diffuse.r, 4 * sizeof(float));
       std::memcpy(&amb[count * 4], &L.Ambient.r, 4 * sizeof(float));
+      std::memcpy(&spec[count * 4], &L.Specular.r, 4 * sizeof(float));
       count++;
     }
     glUniform1i(p->uLightCount, count);
@@ -320,11 +323,15 @@ struct Device8 : IDirect3DDevice8 {
       glUniform3fv(p->uSpotParams, count, spotParams);
       glUniform4fv(p->uLightDiffuse, count, diff);
       glUniform4fv(p->uLightAmbient, count, amb);
+      glUniform4fv(p->uLightSpecular, count, spec);
     }
+    glUniform1i(p->uSpecularEnable, specularEnable ? 1 : 0);
+    glUniform1f(p->uMatPower, material.Power);
     glUniform4fv(p->uGlobalAmbient, 1, globalAmbient);
     glUniform4fv(p->uMatDiffuse, 1, &material.Diffuse.r);
     glUniform4fv(p->uMatAmbient, 1, &material.Ambient.r);
     glUniform4fv(p->uMatEmissive, 1, &material.Emissive.r);
+    glUniform4fv(p->uMatSpecular, 1, &material.Specular.r);
   }
   HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) override {
     if (!pMatrix) return D3DERR_INVALIDCALL;
