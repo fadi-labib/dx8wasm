@@ -34,6 +34,7 @@ const SMOKES = [
   ['specular_smoke', [204, 204, 204, 255]],    // Blinn specular N·H=1: matSpec(1) * lightSpec(0.8)
   ['rhw_smoke', [0, 255, 0, 255]],             // pre-transformed screen-space quad, right-half green
   ['strip_smoke', [0, 255, 255, 255]],         // triangle strip (primCount 2 -> 4 indices) fills the quad
+  ['combiner_smoke', [128, 128, 128, 255]],    // D3DTOP_ADD: tex(0.3,0.2,0.1) + diffuse(0.2,0.3,0.4)
 ];
 
 const server = createServer((req, res) => {

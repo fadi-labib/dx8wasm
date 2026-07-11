@@ -223,11 +223,14 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT SetTextureStageState(DWORD, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
     if (Type == D3DTSS_COLOROP) {
-      if (Value == D3DTOP_MODULATE || Value == D3DTOP_SELECTARG1 || Value == D3DTOP_DISABLE) {
-        colorOp = Value;                 // args assumed canonical until a game sets them
-      } else {
-        coverage::unhandled_texture_op(Value);
-        colorOp = D3DTOP_MODULATE;       // fall back so the draw still produces pixels
+      switch (Value) {   // args assumed canonical (arg1=texture, arg2=diffuse) until a game sets them
+        case D3DTOP_DISABLE: case D3DTOP_SELECTARG1: case D3DTOP_SELECTARG2:
+        case D3DTOP_MODULATE: case D3DTOP_MODULATE2X: case D3DTOP_MODULATE4X:
+        case D3DTOP_ADD: case D3DTOP_ADDSIGNED:
+          colorOp = Value; break;
+        default:
+          coverage::unhandled_texture_op(Value);
+          colorOp = D3DTOP_MODULATE;    // fall back so the draw still produces pixels
       }
     }
     return D3D_OK;

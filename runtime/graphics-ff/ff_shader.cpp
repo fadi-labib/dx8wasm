@@ -126,9 +126,19 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   if (lit) {
     color = "vColor";   // material/light already combined per-vertex
   } else if (hasTex) {
-    const char* tex = "texture(uTex, vUV).bgra";
-    if (colorOp == D3DTOP_SELECTARG1)          color = tex;                        // texture only
-    else /* MODULATE (D3D stage-0 default) */  color = hasDiffuse ? std::string("vColor * ") + tex : tex;
+    // Single-stage combiner over the default args: arg1 = texture, arg2 = diffuse
+    // (D3DTA_DIFFUSE; white when the FVF has no diffuse). D3D saturates results.
+    const std::string t = "texture(uTex, vUV).bgra";
+    const std::string a2 = hasDiffuse ? "vColor" : "vec4(1.0)";
+    switch (colorOp) {
+      case D3DTOP_SELECTARG1:  color = t; break;
+      case D3DTOP_SELECTARG2:  color = a2; break;
+      case D3DTOP_MODULATE2X:  color = "2.0 * " + a2 + " * " + t; break;
+      case D3DTOP_MODULATE4X:  color = "4.0 * " + a2 + " * " + t; break;
+      case D3DTOP_ADD:         color = a2 + " + " + t; break;
+      case D3DTOP_ADDSIGNED:   color = a2 + " + " + t + " - 0.5"; break;
+      default: /* MODULATE */  color = a2 + " * " + t; break;
+    }
   } else {
     color = hasDiffuse ? "vColor" : "vec4(1.0)";
   }
@@ -198,8 +208,10 @@ const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, b
   // ponytail: XYZ (or XYZRHW) base plus optional DIFFUSE/TEX1 with MODULATE|
   // SELECTARG1, or a lit variant (requires NORMAL, untextured, non-rhw).
   const bool supported = (fvf & D3DFVF_XYZ) || rhw;
-  const bool ok = supported &&
-      (!hasTex || colorOp == D3DTOP_MODULATE || colorOp == D3DTOP_SELECTARG1) &&
+  const bool opOk = colorOp == D3DTOP_MODULATE || colorOp == D3DTOP_SELECTARG1 ||
+      colorOp == D3DTOP_SELECTARG2 || colorOp == D3DTOP_MODULATE2X || colorOp == D3DTOP_MODULATE4X ||
+      colorOp == D3DTOP_ADD || colorOp == D3DTOP_ADDSIGNED;
+  const bool ok = supported && (!hasTex || opOk) &&
       (!lit || ((fvf & D3DFVF_NORMAL) && !hasTex && !rhw));
   if (!ok) {
     std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x colorOp %u lit %d\n", fvf, colorOp, (int)lit);

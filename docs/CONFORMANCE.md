@@ -35,16 +35,16 @@ coverage layer — never silently wrong.
 | `D3DRS_FOGDENSITY` | ⚠️ fallback |
 | `D3DRS_FILLMODE` | ⚠️ fallback |
 
-## Texture-stage color ops (3/6 handled)
+## Texture-stage color ops (6/6 handled)
 
 | Op | Status |
 |----|--------|
 | `D3DTOP_DISABLE` | ✅ handled |
 | `D3DTOP_SELECTARG1` | ✅ handled |
 | `D3DTOP_MODULATE` | ✅ handled |
-| `D3DTOP_ADD` | ⚠️ fallback |
-| `D3DTOP_MODULATE2X` | ⚠️ fallback |
-| `D3DTOP_ADDSIGNED` | ⚠️ fallback |
+| `D3DTOP_ADD` | ✅ handled |
+| `D3DTOP_MODULATE2X` | ✅ handled |
+| `D3DTOP_ADDSIGNED` | ✅ handled |
 
 ## Texture formats (2/5 handled)
 

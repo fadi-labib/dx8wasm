@@ -113,6 +113,12 @@ target_link_libraries(strip_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(strip_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(strip_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(combiner_smoke runtime/test/combiner_smoke.cpp)
+target_include_directories(combiner_smoke PRIVATE runtime runtime/d3d8)
+target_link_libraries(combiner_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(combiner_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(combiner_smoke PROPERTIES SUFFIX ".js")
+
 # Conformance probe (tool, not a smoke): emits coverage JSON for CONFORMANCE.md.
 add_executable(conformance runtime/test/conformance.cpp)
 target_include_directories(conformance PRIVATE runtime runtime/d3d8 runtime/include)
