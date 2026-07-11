@@ -57,6 +57,14 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - Pick a *different* fit: a **DirectDraw-2D** classic (simpler graphics path) or an **OSS reimplementation** (openage/OpenRA). Wire it up; measure how much is drop-in vs gap-fill.
 - Deliverable: a second game running → the SDK is proven reusable, not Generals-shaped.
 
+## Game-integration foundation ✅
+The seam a real game plugs into, all via the public surface (see [`docs/INTEGRATION.md`](INTEGRATION.md)):
+- `dx8wasm_init`/`shutdown`/`has_cap` implemented; `log_unimplemented` gates coverage logging.
+- Input: `dx8wasm_pump` + `dx8wasm_input` (SDL events → key/mouse/wheel/quit). No Win32 message pump — this is the raw-input seam a game maps from.
+- Device owns the GL viewport (games drive only D3D8, never GL).
+- [`examples/minigame/`](../examples/minigame/): a keyboard-controlled sprite using only init + D3D8 + pump — the integration template. `node scripts/minigame.mjs`.
+- **Still game-side (grow on demand):** `compatlib` Win32 shims (timing/file/thread — coverage-driven, per the guide), non-blocking main loop conversion, asset wiring, audio.
+
 ## Cross-cutting, ongoing
 - **dx8wasm is the home for future work.** The Generals repos (`Generals-WebAssembly`, `Generals-Mac-iOS-iPad`) are **read-only reference sources** we study for behavior — we don't sync from them or push back to Lolendor (low-trust, AI-generated; see `docs/LICENSING.md`).
 - Document every gap-fill as a lessons entry (per `PORTING_METHOD.md` §6).
