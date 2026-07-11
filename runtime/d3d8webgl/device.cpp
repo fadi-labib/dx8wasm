@@ -169,6 +169,7 @@ struct Device8 : IDirect3DDevice8 {
   float fogColor[3] = {0, 0, 0}, fogStart = 0.0f, fogEnd = 1.0f;
   float vpW, vpH;
   D3DVIEWPORT8 viewport;
+  GLuint scratchVB = 0, scratchIB = 0;   // reused for DrawPrimitiveUP (user-pointer) draws
 
   Device8(int w, int h) : vpW((float)w), vpH((float)h) {
     set_identity(world); set_identity(view); set_identity(proj);
@@ -333,35 +334,42 @@ struct Device8 : IDirect3DDevice8 {
     glUniform4fv(p->uMatAmbient, 1, &material.Ambient.r); glUniform4fv(p->uMatEmissive, 1, &material.Emissive.r);
     glUniform4fv(p->uMatSpecular, 1, &material.Specular.r);
   }
-  HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE Type, UINT, UINT, UINT StartIndex, UINT PrimitiveCount) override {
-    GLenum mode; GLsizei icount;
-    if (!stream || !indices || !prim_info(Type, PrimitiveCount, mode, icount)) return D3DERR_INVALIDCALL;
+  // Select the FF program, upload uniforms, and bind vertex attributes from the
+  // currently-bound GL_ARRAY_BUFFER at the given stride. Shared by the buffer and
+  // user-pointer draw paths. Returns false if no program supports the state.
+  bool bind_pipeline(GLsizei vstride) {
     glViewport((GLint)viewport.X, (GLint)viewport.Y, (GLsizei)viewport.Width, (GLsizei)viewport.Height);
     const bool textured = (fvf & D3DFVF_TEX1) && texture;
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
     const uint32_t af = alphaTestEnable ? alphaFunc : 0;
     const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af, lit, fogEnable);
-    if (!p) return D3DERR_INVALIDCALL;
+    if (!p) return false;
     glUseProgram(p->prog);
     glUniformMatrix4fv(p->uWorld, 1, GL_FALSE, world);
     glUniformMatrix4fv(p->uView, 1, GL_FALSE, view);
     glUniformMatrix4fv(p->uProj, 1, GL_FALSE, proj);
-    glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
     const bool rhw = fvf & D3DFVF_XYZRHW;
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, rhw ? 4 : 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)0);
+    glVertexAttribPointer(0, rhw ? 4 : 3, GL_FLOAT, GL_FALSE, vstride, (void*)0);
     GLuint off = rhw ? 16 : 12;
-    if (fvf & D3DFVF_NORMAL) { glEnableVertexAttribArray(3); glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(uintptr_t)off); off += 12; }
+    if (fvf & D3DFVF_NORMAL) { glEnableVertexAttribArray(3); glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)off); off += 12; }
     else glDisableVertexAttribArray(3);
-    if (fvf & D3DFVF_DIFFUSE) { glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, (GLsizei)stride, (void*)(uintptr_t)off); off += 4; }
+    if (fvf & D3DFVF_DIFFUSE) { glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, vstride, (void*)(uintptr_t)off); off += 4; }
     else glDisableVertexAttribArray(1);
-    if (fvf & D3DFVF_TEX1) { glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, (GLsizei)stride, (void*)(uintptr_t)off); }
+    if (fvf & D3DFVF_TEX1) { glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)off); }
     else glDisableVertexAttribArray(2);
     if (textured) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture->tex); glUniform1i(p->uTex, 0); }
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
     if (rhw) glUniform2f(p->uViewport, vpW, vpH);
     if (lit) set_light_uniforms(p);
     if (fogEnable) { glUniform3fv(p->uFogColor, 1, fogColor); glUniform1f(p->uFogStart, fogStart); glUniform1f(p->uFogEnd, fogEnd); }
+    return true;
+  }
+  HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE Type, UINT, UINT, UINT StartIndex, UINT PrimitiveCount) override {
+    GLenum mode; GLsizei icount;
+    if (!stream || !indices || !prim_info(Type, PrimitiveCount, mode, icount)) return D3DERR_INVALIDCALL;
+    glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
+    if (!bind_pipeline((GLsizei)stride)) return D3DERR_INVALIDCALL;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices->b.glbuf);
     glDrawElements(mode, icount, GL_UNSIGNED_SHORT, (void*)(uintptr_t)(StartIndex * sizeof(uint16_t)));
     return D3D_OK;
@@ -445,9 +453,43 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT GetPaletteEntries(UINT, PALETTEENTRY*) override { return D3D_OK; }
   HRESULT SetCurrentTexturePalette(UINT) override { return D3D_OK; }
   HRESULT GetCurrentTexturePalette(UINT* n) override { if (n) *n = 0; return D3D_OK; }
-  HRESULT DrawPrimitive(D3DPRIMITIVETYPE, UINT, UINT) override { warn_once("DrawPrimitive"); return D3D_OK; }
-  HRESULT DrawPrimitiveUP(D3DPRIMITIVETYPE, UINT, const void*, UINT) override { warn_once("DrawPrimitiveUP"); return D3D_OK; }
-  HRESULT DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE, UINT, UINT, UINT, const void*, D3DFORMAT, const void*, UINT) override { warn_once("DrawIndexedPrimitiveUP"); return D3D_OK; }
+  HRESULT DrawPrimitive(D3DPRIMITIVETYPE Type, UINT StartVertex, UINT PrimitiveCount) override {
+    GLenum mode; GLsizei vcount;
+    if (!stream || !prim_info(Type, PrimitiveCount, mode, vcount)) return D3DERR_INVALIDCALL;
+    glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
+    if (!bind_pipeline((GLsizei)stride)) return D3DERR_INVALIDCALL;
+    glDrawArrays(mode, (GLint)StartVertex, vcount);
+    return D3D_OK;
+  }
+  // User-pointer draws: vertex/index data is inline (no D3D buffer). Stream it
+  // through reused scratch GL buffers. Common for UI/particles/dynamic geometry.
+  HRESULT DrawPrimitiveUP(D3DPRIMITIVETYPE Type, UINT PrimitiveCount, const void* pVertexData, UINT VertexStride) override {
+    GLenum mode; GLsizei vcount;
+    if (!pVertexData || !prim_info(Type, PrimitiveCount, mode, vcount)) return D3DERR_INVALIDCALL;
+    if (!scratchVB) glGenBuffers(1, &scratchVB);
+    glBindBuffer(GL_ARRAY_BUFFER, scratchVB);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)vcount * VertexStride, pVertexData, GL_STREAM_DRAW);
+    if (!bind_pipeline((GLsizei)VertexStride)) return D3DERR_INVALIDCALL;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    glDrawArrays(mode, 0, vcount);
+    return D3D_OK;
+  }
+  HRESULT DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE Type, UINT MinVertexIndex, UINT NumVertices, UINT PrimitiveCount,
+                                 const void* pIndexData, D3DFORMAT IndexDataFormat, const void* pVertexData, UINT VertexStride) override {
+    GLenum mode; GLsizei icount;
+    if (!pIndexData || !pVertexData || !prim_info(Type, PrimitiveCount, mode, icount)) return D3DERR_INVALIDCALL;
+    const bool i32 = IndexDataFormat == D3DFMT_INDEX32;
+    const GLenum itype = i32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
+    if (!scratchVB) glGenBuffers(1, &scratchVB);
+    if (!scratchIB) glGenBuffers(1, &scratchIB);
+    glBindBuffer(GL_ARRAY_BUFFER, scratchVB);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(MinVertexIndex + NumVertices) * VertexStride, pVertexData, GL_STREAM_DRAW);
+    if (!bind_pipeline((GLsizei)VertexStride)) return D3DERR_INVALIDCALL;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, scratchIB);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)icount * (i32 ? 4 : 2), pIndexData, GL_STREAM_DRAW);
+    glDrawElements(mode, icount, itype, (void*)0);
+    return D3D_OK;
+  }
   HRESULT ProcessVertices(UINT, UINT, UINT, IDirect3DVertexBuffer8*, DWORD) override { warn_once("ProcessVertices"); return D3DERR_INVALIDCALL; }
   HRESULT CreateVertexShader(const DWORD*, const DWORD*, DWORD* h, DWORD) override { if (h) *h = 0; warn_once("CreateVertexShader"); return D3D_OK; }
   HRESULT GetVertexShader(DWORD* h) override { if (h) *h = fvf; return D3D_OK; }
