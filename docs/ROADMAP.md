@@ -63,7 +63,8 @@ The seam a real game plugs into, all via the public surface (see [`docs/INTEGRAT
 - Input: `dx8wasm_pump` + `dx8wasm_input` (SDL events → key/mouse/wheel/quit). No Win32 message pump — this is the raw-input seam a game maps from.
 - Device owns the GL viewport (games drive only D3D8, never GL).
 - [`examples/minigame/`](../examples/minigame/): a keyboard-controlled sprite using only init + D3D8 + pump — the integration template. `node scripts/minigame.mjs`.
-- **Still game-side (grow on demand):** `compatlib` Win32 shims (timing/file/thread — coverage-driven, per the guide), non-blocking main loop conversion, asset wiring, audio.
+- **compatlib** (Win32→POSIX, `docs/COMPATLIB.md` maps the full surface Generals needs, tiered): ✅ **Tier 0 done** (`runtime/compatlib/` — types umbrella + timing `timeGetTime`/`GetTickCount`/`QueryPerformance*`/`Sleep` + `OutputDebugStringA`, all on the one emscripten clock; `compat_smoke` verifies timer consistency). Tiers 1–4 (file/registry/module/thread, D3DX, sockets/COM/VFW) grow against the real build.
+- **Still game-side (grow on demand):** the higher compatlib tiers, non-blocking main loop conversion, asset wiring, audio.
 
 ## Cross-cutting, ongoing
 - **dx8wasm is the home for future work.** The Generals repos (`Generals-WebAssembly`, `Generals-Mac-iOS-iPad`) are **read-only reference sources** we study for behavior — we don't sync from them or push back to Lolendor (low-trust, AI-generated; see `docs/LICENSING.md`).
