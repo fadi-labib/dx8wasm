@@ -10,7 +10,7 @@ Scope: the fixed-function subset a DirectX-8 game (target: C&C Generals) needs.
 "fallback" means the token is safely ignored/substituted and logged via the
 coverage layer — never silently wrong.
 
-## Render states (17/20 handled)
+## Render states (21/26 handled)
 
 | State | Status |
 |-------|--------|
@@ -34,6 +34,12 @@ coverage layer — never silently wrong.
 | `D3DRS_FOGTABLEMODE(EXP)` | ⚠️ fallback |
 | `D3DRS_FOGDENSITY` | ⚠️ fallback |
 | `D3DRS_FILLMODE` | ⚠️ fallback |
+| `D3DRS_ZFUNC` | ✅ handled |
+| `D3DRS_DITHERENABLE` | ✅ handled |
+| `D3DRS_ZBIAS` | ✅ handled |
+| `D3DRS_SHADEMODE` | ✅ handled |
+| `D3DRS_STENCILENABLE` | ⚠️ fallback |
+| `D3DRS_TEXTUREFACTOR` | ⚠️ fallback |
 
 ## Texture-stage color ops (6/6 handled)
 
@@ -60,15 +66,18 @@ coverage layer — never silently wrong.
 
 | Feature | Notes | Status | Verified by |
 |---------|-------|--------|-------------|
-| Device / present | Direct3DCreate8, CreateDevice, Clear, Present | ✅ yes | d3d8_smoke |
+| COM ABI | full IDirect3DDevice8 vtable (~94 methods, canonical order); rest stubbed->coverage | ✅ yes | abi_smoke |
+| Device / present | Direct3DCreate8, CreateDevice, Clear, Present, Begin/EndScene, Reset | ✅ yes | d3d8_smoke / abi_smoke |
 | Vertex/index buffers | CreateVertexBuffer/IndexBuffer, Lock/Unlock, SetStreamSource, SetIndices | ✅ yes | draw_smoke |
 | FVF: XYZ / NORMAL / DIFFUSE / TEX1 | attribute layout in FVF order | ✅ yes | draw_smoke / light_smoke |
 | FVF: XYZRHW (pre-transformed) | screen-space UI/HUD vertices (rhw=1) | ✅ yes | rhw_smoke |
 | FVF: SPECULAR, multi-texcoord | extra colour / texcoord sets | ❌ no | — |
-| DrawIndexedPrimitive: all primitive types | list/strip/fan, lines, points | ✅ yes | draw_smoke / strip_smoke |
+| Draw: indexed + non-indexed + user-pointer | DrawIndexedPrimitive/DrawPrimitive/DrawPrimitiveUP/DrawIndexedPrimitiveUP, all topologies | ✅ yes | draw_smoke / strip_smoke / drawup_smoke |
 | Transforms: WORLD / VIEW / PROJECTION | row-major uploaded transposed | ✅ yes | draw_smoke |
 | Textures: A8R8G8B8 + LockRect | level 0, nearest, clamp | ✅ yes | draw_tex_smoke |
-| Texture combiners: MODULATE, SELECTARG1 | stage-0 color op | ✅ yes | draw_tex_smoke |
+| Texture combiners (stage 0) | MODULATE/2X/4X, ADD, ADDSIGNED, SELECTARG1/2 | ✅ yes | draw_tex_smoke / combiner_smoke |
+| Lit + textured geometry | lit color modulated by stage-0 texture (terrain/units) | ✅ yes | lit_tex_smoke |
+| Second texture stage | multi-texture (base + lightmap/detail) | ❌ no | — |
 | Render states: depth / blend / cull / alpha-test | the common subset | ✅ yes | render_state_smoke |
 | Lighting: directional / point / spot | all three D3DLIGHT types | ✅ yes | light/point/spot_light_smoke |
 | Lighting: ambient + diffuse + specular | full FF equation (infinite viewer) | ✅ yes | light/specular_smoke |

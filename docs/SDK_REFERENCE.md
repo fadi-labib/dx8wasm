@@ -85,13 +85,22 @@ HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE, UINT MinIndex, UINT NumVertices,
 (0x010) | `D3DFVF_DIFFUSE` (0x040) | `D3DFVF_TEX1` (0x100). Attribute order in the
 vertex struct: position, normal, diffuse, texcoord. `XYZRHW` excludes lighting.
 
+### ABI note
+`IDirect3DDevice8` is the **complete standard vtable** (~94 methods, canonical
+order). The supported subset does real work; unimplemented methods are honest
+stubs (log-once / coverage / sensible defaults), so a game links and dispatches
+correctly. Missing *behavior* surfaces via the coverage layer, never a crash.
+
 ### What's supported
 All three light types (directional/point/spot), the full ambient+diffuse+specular
-equation, linear fog, depth/blend/cull/alpha-test render states, `MODULATE`/
-`MODULATE2X`/`MODULATE4X`/`ADD`/`ADDSIGNED`/`SELECTARG1`/`SELECTARG2` combiners,
-`A8R8G8B8`/`X8R8G8B8` textures, every primitive type. **Authoritative, current
-list: [`CONFORMANCE.md`](CONFORMANCE.md).** Anything not listed falls back and is
-counted — see the coverage API below.
+equation, **lit + textured** geometry, linear fog, the common depth/blend/cull/
+alpha-test/z-func render states, `MODULATE`/`MODULATE2X`/`MODULATE4X`/`ADD`/
+`ADDSIGNED`/`SELECTARG1`/`SELECTARG2` stage-0 combiners, `A8R8G8B8`/`X8R8G8B8`
+textures, every primitive type, and indexed / non-indexed / **user-pointer**
+(`DrawPrimitiveUP`/`DrawIndexedPrimitiveUP`) draws. **Authoritative, current list:
+[`CONFORMANCE.md`](CONFORMANCE.md).** Not-yet-supported (grows against the game):
+a second texture stage, more formats, `.pso` pixel shaders — anything unlisted
+falls back and is counted.
 
 ---
 
