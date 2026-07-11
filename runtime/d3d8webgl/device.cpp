@@ -136,6 +136,14 @@ bool prim_info(D3DPRIMITIVETYPE t, UINT pc, GLenum& mode, GLsizei& n) {
   }
   return false;
 }
+GLenum gl_cmpfunc(DWORD f) {
+  switch (f) {
+    case D3DCMP_NEVER: return GL_NEVER;   case D3DCMP_LESS: return GL_LESS;
+    case D3DCMP_EQUAL: return GL_EQUAL;   case D3DCMP_LESSEQUAL: return GL_LEQUAL;
+    case D3DCMP_GREATER: return GL_GREATER; case D3DCMP_NOTEQUAL: return GL_NOTEQUAL;
+    case D3DCMP_GREATEREQUAL: return GL_GEQUAL; default: return GL_ALWAYS;
+  }
+}
 GLenum gl_blend(DWORD b) {
   switch (b) {
     case D3DBLEND_ZERO: return GL_ZERO;             case D3DBLEND_ONE: return GL_ONE;
@@ -252,6 +260,12 @@ struct Device8 : IDirect3DDevice8 {
     switch (State) {
       case D3DRS_ZENABLE:          Value ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST); break;
       case D3DRS_ZWRITEENABLE:     zWrite = Value != 0; glDepthMask(zWrite ? GL_TRUE : GL_FALSE); break;
+      case D3DRS_ZFUNC:            glDepthFunc(gl_cmpfunc(Value)); break;
+      case D3DRS_DITHERENABLE:     Value ? glEnable(GL_DITHER) : glDisable(GL_DITHER); break;
+      case D3DRS_ZBIAS:            // legacy 0..16 depth-bias level -> polygon offset
+        if (Value) { glPolygonOffset(-(float)Value, -(float)Value); glEnable(GL_POLYGON_OFFSET_FILL); }
+        else glDisable(GL_POLYGON_OFFSET_FILL); break;
+      case D3DRS_SHADEMODE:        break;   // GOURAUD (our default); FLAT unsupported
       case D3DRS_ALPHABLENDENABLE: Value ? glEnable(GL_BLEND) : glDisable(GL_BLEND); break;
       case D3DRS_SRCBLEND:         srcBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
       case D3DRS_DESTBLEND:        dstBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
