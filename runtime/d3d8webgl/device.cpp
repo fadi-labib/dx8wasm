@@ -363,6 +363,9 @@ struct Device8 : IDirect3DDevice8 {
                                UINT PrimitiveCount) override {
     GLenum mode; GLsizei icount;
     if (!stream || !indices || !prim_info(Type, PrimitiveCount, mode, icount)) return D3DERR_INVALIDCALL;
+    // Own the viewport: SDL's emscripten canvas can be resized after context
+    // creation, leaving GL's viewport stale. A game drives only D3D8, not GL.
+    glViewport(0, 0, (GLsizei)vpW, (GLsizei)vpH);
     const bool textured = (fvf & D3DFVF_TEX1) && texture;
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
     const uint32_t af = alphaTestEnable ? alphaFunc : 0;

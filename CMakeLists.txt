@@ -18,7 +18,7 @@ set_target_properties(gl_smoke PROPERTIES SUFFIX ".js")
 set(DX8_SDL3 "--use-port=sdl3")
 
 add_library(dx8_platform STATIC runtime/platform/platform_sdl3.cpp)
-target_include_directories(dx8_platform PUBLIC runtime)
+target_include_directories(dx8_platform PUBLIC runtime runtime/include)
 target_compile_options(dx8_platform PRIVATE ${DX8_SDL3})
 
 add_executable(platform_smoke runtime/test/platform_smoke.cpp)
@@ -30,7 +30,7 @@ set_target_properties(platform_smoke PROPERTIES SUFFIX ".js")
 
 add_library(dx8_d3d8webgl STATIC
   runtime/d3d8webgl/d3d8.cpp runtime/d3d8webgl/device.cpp
-  runtime/graphics-ff/ff_shader.cpp runtime/coverage/coverage.cpp)
+  runtime/graphics-ff/ff_shader.cpp runtime/coverage/coverage.cpp runtime/runtime.cpp)
 target_include_directories(dx8_d3d8webgl PUBLIC runtime runtime/d3d8 runtime/include)
 target_link_libraries(dx8_d3d8webgl PUBLIC dx8_platform)
 target_compile_options(dx8_d3d8webgl PRIVATE ${DX8_SDL3})
@@ -118,6 +118,13 @@ target_include_directories(combiner_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(combiner_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(combiner_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(combiner_smoke PROPERTIES SUFFIX ".js")
+
+# Integration example: a real game plugs in exactly like this (contract + D3D8).
+add_executable(minigame examples/minigame/minigame.cpp)
+target_include_directories(minigame PRIVATE runtime runtime/d3d8 runtime/include)
+target_link_libraries(minigame PRIVATE dx8_d3d8webgl)
+target_link_options(minigame PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(minigame PROPERTIES SUFFIX ".js")
 
 # Conformance probe (tool, not a smoke): emits coverage JSON for CONFORMANCE.md.
 add_executable(conformance runtime/test/conformance.cpp)

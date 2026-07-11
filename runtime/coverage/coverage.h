@@ -10,5 +10,6 @@ namespace coverage {
 void unhandled_render_state(uint32_t state);
 void unhandled_texture_op(uint32_t op);
 void unhandled_format(uint32_t fmt);
+void set_logging(bool on);   // dx8wasm_init(log_unimplemented) gates the stderr logging
 }
 #endif

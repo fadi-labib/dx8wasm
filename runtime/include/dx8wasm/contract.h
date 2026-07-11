@@ -70,6 +70,22 @@ void dx8wasm_get_coverage(dx8wasm_coverage* out);
 typedef void (*dx8wasm_unhandled_cb)(const char* kind, uint32_t value, void* user);
 void dx8wasm_set_unhandled_callback(dx8wasm_unhandled_cb cb, void* user);
 
+// --- Input -------------------------------------------------------------------
+// Raw input state filled by dx8wasm_pump(). A game's input layer maps this onto
+// its own handling (there is no Win32 message pump — this is the seam instead).
+typedef struct {
+    uint8_t keys[256];        // [SDL scancode] != 0 while held
+    int32_t mouse_x, mouse_y; // canvas-relative pixel position
+    uint8_t mouse_buttons;    // bit0 = left, bit1 = right, bit2 = middle
+    int32_t wheel;            // wheel delta accumulated since the previous pump
+    int     quit;             // window/tab close requested
+} dx8wasm_input;
+
+// Drain pending window/input events and fill `out` with the current state. Call
+// once per frame (typically at the top of the render loop). `out` may be NULL to
+// just service events.
+void dx8wasm_pump(dx8wasm_input* out);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

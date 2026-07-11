@@ -8,6 +8,7 @@ namespace {
 dx8wasm_coverage g_counts{};
 dx8wasm_unhandled_cb g_cb = nullptr;
 void* g_user = nullptr;
+bool g_logging = true;       // gated by dx8wasm_init(log_unimplemented)
 std::set<uint64_t> g_seen;   // distinct (family, value) already reported
 
 enum Family { RS = 0, TOP = 1, FMT = 2 };
@@ -19,7 +20,7 @@ void note(Family fam, const char* kind, uint32_t value, uint32_t& counter) {
   ++counter;
   ++g_counts.fallbacks_taken;
   if (g_seen.insert(((uint64_t)fam << 32) | value).second) {
-    std::fprintf(stderr, "[dx8wasm] unhandled %s 0x%x — falling back\n", kind, value);
+    if (g_logging) std::fprintf(stderr, "[dx8wasm] unhandled %s 0x%x — falling back\n", kind, value);
     if (g_cb) g_cb(kind, value, g_user);
   }
 }
@@ -29,6 +30,7 @@ namespace coverage {
 void unhandled_render_state(uint32_t s) { note(RS,  "D3DRS",  s, g_counts.unhandled_render_states); }
 void unhandled_texture_op(uint32_t o)   { note(TOP, "D3DTOP", o, g_counts.unhandled_texture_stage_ops); }
 void unhandled_format(uint32_t f)       { note(FMT, "D3DFMT", f, g_counts.unhandled_formats); }
+void set_logging(bool on) { g_logging = on; }
 } // namespace coverage
 
 extern "C" {
