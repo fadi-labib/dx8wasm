@@ -30,6 +30,7 @@ through the public surface alone.
 - **Wiring a game:** [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — the step-by-step guide.
 - **Working template:** [`examples/minigame/`](examples/minigame/) — a keyboard-controlled sprite using only `dx8wasm_init` + D3D8 + `dx8wasm_pump`.
 - Design: `SPEC.md`; plan: `docs/ROADMAP.md`; methodology: `docs/PORTING_METHOD.md`.
+- **For AI agents:** [`llms.txt`](llms.txt) (index) · [`AGENTS.md`](AGENTS.md) (contributing) · [`docs/SDK_REFERENCE.md`](docs/SDK_REFERENCE.md) (building against) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Single-file context: [`llms-full.txt`](llms-full.txt) (`bash scripts/gen-llms-full.sh` to regenerate).
 
 ## Quickstart
 ```bash
