@@ -57,6 +57,18 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - Pick a *different* fit: a **DirectDraw-2D** classic (simpler graphics path) or an **OSS reimplementation** (openage/OpenRA). Wire it up; measure how much is drop-in vs gap-fill.
 - Deliverable: a second game running → the SDK is proven reusable, not Generals-shaped.
 
+## Phase A — full D3D8 COM ABI ✅ (Generals integration prerequisite)
+The clean-room `d3d8.h` is now the **complete standard D3D8 interface** in canonical
+vtable order (slot 0 = `QueryInterface`), not the old minimal subset — so a game
+compiled against any standard D3D8 header dispatches to the right slot. `IDirect3D8`,
+`IDirect3DDevice8` (~94 methods), and the resource hierarchy (`IDirect3DResource8`/
+`BaseTexture8`/`Texture8`/`VertexBuffer8`/`IndexBuffer8`/`Surface8`) are all present;
+the supported subset does real work, the rest are honest stubs (`warn_once` /
+coverage / sensible defaults). Verified by `abi_smoke` (low/mid/high-slot dispatch)
+plus all 20 existing smokes still green through the expanded vtable. This retires
+the roadmap's "real-ABI compat" deferral and unblocks linking against Generals
+(see `../generals-dx8wasm/PLAN.md`). Next Phase A: bring-up harness + CMake seam.
+
 ## Game-integration foundation ✅
 The seam a real game plugs into, all via the public surface (see [`docs/INTEGRATION.md`](INTEGRATION.md)):
 - `dx8wasm_init`/`shutdown`/`has_cap` implemented; `log_unimplemented` gates coverage logging.
