@@ -124,7 +124,9 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
 
   std::string color;
   if (lit) {
-    color = "vColor";   // material/light already combined per-vertex
+    // Per-vertex Gouraud lit color, modulated by the stage-0 texture when present
+    // (D3DTOP_MODULATE of the lit diffuse with the texel — terrain/units path).
+    color = hasTex ? "vColor * texture(uTex, vUV).bgra" : "vColor";
   } else if (hasTex) {
     // Single-stage combiner over the default args: arg1 = texture, arg2 = diffuse
     // (D3DTA_DIFFUSE; white when the FVF has no diffuse). D3D saturates results.
@@ -212,7 +214,7 @@ const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, b
       colorOp == D3DTOP_SELECTARG2 || colorOp == D3DTOP_MODULATE2X || colorOp == D3DTOP_MODULATE4X ||
       colorOp == D3DTOP_ADD || colorOp == D3DTOP_ADDSIGNED;
   const bool ok = supported && (!hasTex || opOk) &&
-      (!lit || ((fvf & D3DFVF_NORMAL) && !hasTex && !rhw));
+      (!lit || ((fvf & D3DFVF_NORMAL) && !rhw));   // lit may now be textured (modulate)
   if (!ok) {
     std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x colorOp %u lit %d\n", fvf, colorOp, (int)lit);
     return nullptr;
