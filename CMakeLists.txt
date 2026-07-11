@@ -122,8 +122,8 @@ set_target_properties(combiner_smoke PROPERTIES SUFFIX ".js")
 # compatlib Tier 0 (Win32 bedrock: types + timing + debug). Grows per docs/COMPATLIB.md.
 add_library(dx8_compat STATIC
   runtime/compatlib/win32_time.cpp runtime/compatlib/win32_file.cpp runtime/compatlib/win32_mem.cpp
-  runtime/compatlib/win32_sys.cpp runtime/compatlib/win32_registry.cpp)
-target_include_directories(dx8_compat PUBLIC runtime)
+  runtime/compatlib/win32_sys.cpp runtime/compatlib/win32_registry.cpp runtime/compatlib/d3dx8math.cpp)
+target_include_directories(dx8_compat PUBLIC runtime runtime/d3d8)
 
 add_executable(compat_smoke runtime/test/compat_smoke.cpp)
 target_include_directories(compat_smoke PRIVATE runtime)
@@ -142,6 +142,12 @@ target_include_directories(compat_sys_smoke PRIVATE runtime)
 target_link_libraries(compat_sys_smoke PRIVATE dx8_compat)
 target_link_options(compat_sys_smoke PRIVATE ${DX8_WEBGL_LINK})
 set_target_properties(compat_sys_smoke PROPERTIES SUFFIX ".js")
+
+add_executable(compat_d3dx_smoke runtime/test/compat_d3dx_smoke.cpp)
+target_include_directories(compat_d3dx_smoke PRIVATE runtime runtime/d3d8)
+target_link_libraries(compat_d3dx_smoke PRIVATE dx8_compat)
+target_link_options(compat_d3dx_smoke PRIVATE ${DX8_WEBGL_LINK})
+set_target_properties(compat_d3dx_smoke PROPERTIES SUFFIX ".js")
 
 # Integration example: a real game plugs in exactly like this (contract + D3D8).
 add_executable(minigame examples/minigame/minigame.cpp)

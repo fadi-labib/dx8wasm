@@ -38,6 +38,7 @@ const SMOKES = [
   ['compat_smoke', [1, 0, 0, 255]],            // compatlib Tier 0 timing self-test (no GL)
   ['compat_file_smoke', [1, 0, 0, 255]],       // compatlib Tier 1 file/dir/memory self-test (no GL)
   ['compat_sys_smoke', [1, 0, 0, 255]],        // compatlib Tier 2 module/thread/registry self-test (no GL)
+  ['compat_d3dx_smoke', [1, 0, 0, 255]],       // compatlib Tier 3 D3DX math self-test (no GL)
 ];
 
 const server = createServer((req, res) => {
