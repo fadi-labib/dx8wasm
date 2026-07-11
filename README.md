@@ -19,16 +19,27 @@ Proven: a full 500k-LOC engine (C&C Generals Zero Hour) already runs in-browser 
 Not an emulator, not a magic button, not for modern DX11/12 AAA. See `SPEC.md` §2–3, §12 for the fit criteria and the "which strategy for which game" decision framework.
 
 ## Status
-**Phase 0 — spec + scaffold.** See `SPEC.md` for the design, `docs/ROADMAP.md` for the plan, `docs/PORTING_METHOD.md` for the methodology that generalizes to any classic-game port.
+**Phases 0–3 done; game-integration foundation in place.** The D3D8→WebGL2
+fixed-function pipeline is broadly feature-complete (transforms, all light types,
+ambient/diffuse/specular, fog, texture combiners, render states, pre-transformed
+2D, every primitive type) — verified by 16 headless pixel smokes on Linux CI and
+catalogued in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md). The runtime contract
+(init + input pump + coverage introspection) is implemented, and a game plugs in
+through the public surface alone.
 
-## Quickstart (once a game is wired — target shape)
+- **Wiring a game:** [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — the step-by-step guide.
+- **Working template:** [`examples/minigame/`](examples/minigame/) — a keyboard-controlled sprite using only `dx8wasm_init` + D3D8 + `dx8wasm_pump`.
+- Design: `SPEC.md`; plan: `docs/ROADMAP.md`; methodology: `docs/PORTING_METHOD.md`.
+
+## Quickstart
 ```bash
-# build the game to wasm against the SDK
+# build every wasm target (SDK + smokes + examples)
 cmake --preset emscripten && cmake --build build/emscripten
-# pack the user's game assets
-asset-tools/pack.sh <build-name>
-# serve with a secure context (SharedArrayBuffer needs HTTPS or localhost)
-python3 tools/serve-https.py 8443     # https://<host>:8443
+# see the pipeline live in a browser
+node scripts/demo.mjs        # http://127.0.0.1:8080  (spinning textured + lit quads)
+node scripts/minigame.mjs    # http://127.0.0.1:8081  (arrow-key sprite — the integration template)
+# run the headless pixel-smoke suite
+node web-runtime/test/phase2.gpu.test.mjs
 ```
 
 ## License
