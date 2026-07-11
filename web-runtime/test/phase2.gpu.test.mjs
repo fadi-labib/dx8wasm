@@ -33,6 +33,7 @@ const SMOKES = [
   ['fog_smoke', [128, 0, 128, 255]],           // linear fog: mix(blue, red, 0.5) at eye-depth 0.5
   ['specular_smoke', [204, 204, 204, 255]],    // Blinn specular N·H=1: matSpec(1) * lightSpec(0.8)
   ['rhw_smoke', [0, 255, 0, 255]],             // pre-transformed screen-space quad, right-half green
+  ['strip_smoke', [0, 255, 255, 255]],         // triangle strip (primCount 2 -> 4 indices) fills the quad
 ];
 
 const server = createServer((req, res) => {

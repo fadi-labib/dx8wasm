@@ -65,7 +65,7 @@ coverage layer — never silently wrong.
 | FVF: XYZ / NORMAL / DIFFUSE / TEX1 | attribute layout in FVF order | ✅ yes | draw_smoke / light_smoke |
 | FVF: XYZRHW (pre-transformed) | screen-space UI/HUD vertices (rhw=1) | ✅ yes | rhw_smoke |
 | FVF: SPECULAR, multi-texcoord | extra colour / texcoord sets | ❌ no | — |
-| DrawIndexedPrimitive (TRIANGLELIST) | other primitive types not yet wired | 🟡 partial | draw_smoke |
+| DrawIndexedPrimitive: all primitive types | list/strip/fan, lines, points | ✅ yes | draw_smoke / strip_smoke |
 | Transforms: WORLD / VIEW / PROJECTION | row-major uploaded transposed | ✅ yes | draw_smoke |
 | Textures: A8R8G8B8 + LockRect | level 0, nearest, clamp | ✅ yes | draw_tex_smoke |
 | Texture combiners: MODULATE, SELECTARG1 | stage-0 color op | ✅ yes | draw_tex_smoke |

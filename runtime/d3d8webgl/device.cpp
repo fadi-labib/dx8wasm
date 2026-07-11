@@ -83,6 +83,19 @@ void set_identity(float* m) {
 
 float as_float(DWORD v) { float f; std::memcpy(&f, &v, sizeof f); return f; }   // D3DRS float-in-DWORD
 
+// Map a D3D primitive type + primitive count to the GL mode and index count.
+bool prim_info(D3DPRIMITIVETYPE t, UINT pc, GLenum& mode, GLsizei& n) {
+  switch (t) {
+    case D3DPT_POINTLIST:     mode = GL_POINTS;         n = (GLsizei)pc;       return true;
+    case D3DPT_LINELIST:      mode = GL_LINES;          n = (GLsizei)(pc * 2); return true;
+    case D3DPT_LINESTRIP:     mode = GL_LINE_STRIP;     n = (GLsizei)(pc + 1); return true;
+    case D3DPT_TRIANGLELIST:  mode = GL_TRIANGLES;      n = (GLsizei)(pc * 3); return true;
+    case D3DPT_TRIANGLESTRIP: mode = GL_TRIANGLE_STRIP; n = (GLsizei)(pc + 2); return true;
+    case D3DPT_TRIANGLEFAN:   mode = GL_TRIANGLE_FAN;   n = (GLsizei)(pc + 2); return true;
+  }
+  return false;
+}
+
 GLenum gl_blend(DWORD b) {
   switch (b) {
     case D3DBLEND_ZERO:        return GL_ZERO;
@@ -345,7 +358,8 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE Type, UINT, UINT, UINT StartIndex,
                                UINT PrimitiveCount) override {
-    if (Type != D3DPT_TRIANGLELIST || !stream || !indices) return D3DERR_INVALIDCALL;
+    GLenum mode; GLsizei icount;
+    if (!stream || !indices || !prim_info(Type, PrimitiveCount, mode, icount)) return D3DERR_INVALIDCALL;
     const bool textured = (fvf & D3DFVF_TEX1) && texture;
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
     const uint32_t af = alphaTestEnable ? alphaFunc : 0;
@@ -394,8 +408,7 @@ struct Device8 : IDirect3DDevice8 {
       glUniform1f(p->uFogEnd, fogEnd);
     }
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices->b.glbuf);
-    glDrawElements(GL_TRIANGLES, (GLsizei)(PrimitiveCount * 3), GL_UNSIGNED_SHORT,
-                   (void*)(uintptr_t)(StartIndex * sizeof(uint16_t)));
+    glDrawElements(mode, icount, GL_UNSIGNED_SHORT, (void*)(uintptr_t)(StartIndex * sizeof(uint16_t)));
     return D3D_OK;
   }
 };
