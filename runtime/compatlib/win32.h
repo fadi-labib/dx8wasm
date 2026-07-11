@@ -24,6 +24,49 @@ union LARGE_INTEGER {
   LONGLONG QuadPart;
 };
 
+// --- Tier 1 types + constants (kernel32 file/dir/mem) -----------------------
+#define MAX_PATH 260
+#define INVALID_HANDLE_VALUE ((HANDLE)(intptr_t)-1)
+#define INVALID_FILE_ATTRIBUTES ((DWORD)-1)
+#define GENERIC_READ  0x80000000u
+#define GENERIC_WRITE 0x40000000u
+#define CREATE_NEW 1
+#define CREATE_ALWAYS 2
+#define OPEN_EXISTING 3
+#define OPEN_ALWAYS 4
+#define TRUNCATE_EXISTING 5
+#define FILE_BEGIN 0
+#define FILE_CURRENT 1
+#define FILE_END 2
+#define FILE_ATTRIBUTE_NORMAL 0x00000080u
+#define FILE_ATTRIBUTE_DIRECTORY 0x00000010u
+#define GMEM_FIXED 0x0000
+#define GMEM_ZEROINIT 0x0040
+
+using HGLOBAL = void*;
+struct FILETIME { DWORD dwLowDateTime, dwHighDateTime; };
+struct WIN32_FIND_DATAA {
+  DWORD dwFileAttributes;
+  FILETIME ftCreationTime, ftLastAccessTime, ftLastWriteTime;
+  DWORD nFileSizeHigh, nFileSizeLow;
+  DWORD dwReserved0, dwReserved1;
+  char  cFileName[MAX_PATH];
+  char  cAlternateFileName[14];
+};
+struct MEMORYSTATUS {
+  DWORD dwLength, dwMemoryLoad;
+  DWORD dwTotalPhys, dwAvailPhys, dwTotalPageFile, dwAvailPageFile, dwTotalVirtual, dwAvailVirtual;
+};
+
+// Non-UNICODE generic-name mapping, matching Win32's <tchar.h> behaviour.
+#define CreateFile CreateFileA
+#define GetFileAttributes GetFileAttributesA
+#define FindFirstFile FindFirstFileA
+#define FindNextFile FindNextFileA
+#define CreateDirectory CreateDirectoryA
+#define GetCurrentDirectory GetCurrentDirectoryA
+#define SetCurrentDirectory SetCurrentDirectoryA
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,6 +81,36 @@ DWORD timeBeginPeriod(UINT period);                  // no-op, returns 0
 
 // --- Debug ------------------------------------------------------------------
 void  OutputDebugStringA(const char* str);
+
+// --- Tier 1: file I/O -------------------------------------------------------
+HANDLE CreateFileA(const char* name, DWORD access, DWORD share, void* sec,
+                   DWORD disposition, DWORD flags, HANDLE templ);
+BOOL  ReadFile(HANDLE h, void* buf, DWORD count, DWORD* read, void* overlapped);
+BOOL  WriteFile(HANDLE h, const void* buf, DWORD count, DWORD* written, void* overlapped);
+BOOL  CloseHandle(HANDLE h);
+DWORD SetFilePointer(HANDLE h, LONG dist, LONG* distHigh, DWORD method);
+DWORD GetFileSize(HANDLE h, DWORD* high);
+DWORD GetFileAttributesA(const char* name);
+
+// --- Tier 1: directories ----------------------------------------------------
+HANDLE FindFirstFileA(const char* pattern, WIN32_FIND_DATAA* data);
+BOOL   FindNextFileA(HANDLE h, WIN32_FIND_DATAA* data);
+BOOL   FindClose(HANDLE h);
+BOOL   CreateDirectoryA(const char* name, void* sec);
+DWORD  GetCurrentDirectoryA(DWORD len, char* buf);
+BOOL   SetCurrentDirectoryA(const char* name);
+
+// --- Tier 1: memory ---------------------------------------------------------
+HGLOBAL GlobalAlloc(UINT flags, uint32_t bytes);
+HGLOBAL GlobalFree(HGLOBAL h);
+uint32_t GlobalSize(HGLOBAL h);
+void    GlobalMemoryStatus(MEMORYSTATUS* status);
+
+// --- Tier 1: shell folders (shell32) — stubbed to a fixed virtual home ------
+typedef void* LPITEMIDLIST;
+int  SHGetSpecialFolderLocation(void* hwnd, int csidl, LPITEMIDLIST* ppidl);
+BOOL SHGetPathFromIDListA(LPITEMIDLIST pidl, char* path);
+#define SHGetPathFromIDList SHGetPathFromIDListA
 
 #ifdef __cplusplus
 }

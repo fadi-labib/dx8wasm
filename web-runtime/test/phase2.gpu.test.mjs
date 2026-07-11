@@ -36,6 +36,7 @@ const SMOKES = [
   ['strip_smoke', [0, 255, 255, 255]],         // triangle strip (primCount 2 -> 4 indices) fills the quad
   ['combiner_smoke', [128, 128, 128, 255]],    // D3DTOP_ADD: tex(0.3,0.2,0.1) + diffuse(0.2,0.3,0.4)
   ['compat_smoke', [1, 0, 0, 255]],            // compatlib Tier 0 timing self-test (no GL)
+  ['compat_file_smoke', [1, 0, 0, 255]],       // compatlib Tier 1 file/dir/memory self-test (no GL)
 ];
 
 const server = createServer((req, res) => {
