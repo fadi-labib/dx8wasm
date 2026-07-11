@@ -44,6 +44,28 @@ union LARGE_INTEGER {
 #define GMEM_ZEROINIT 0x0040
 
 using HGLOBAL = void*;
+using HKEY = void*;
+using REGSAM = DWORD;
+typedef DWORD (*LPTHREAD_START_ROUTINE)(void*);
+
+// --- Tier 2 constants (kernel32 / advapi32) ---------------------------------
+#define ERROR_SUCCESS 0
+#define ERROR_FILE_NOT_FOUND 2
+#define ERROR_MORE_DATA 234
+#define REG_SZ 1
+#define REG_BINARY 3
+#define REG_DWORD 4
+#define HKEY_CLASSES_ROOT  ((HKEY)(uintptr_t)0x80000000)
+#define HKEY_CURRENT_USER  ((HKEY)(uintptr_t)0x80000001)
+#define HKEY_LOCAL_MACHINE ((HKEY)(uintptr_t)0x80000002)
+#define HKEY_USERS         ((HKEY)(uintptr_t)0x80000003)
+
+#define LoadLibrary LoadLibraryA
+#define GetModuleFileName GetModuleFileNameA
+#define RegOpenKeyEx RegOpenKeyExA
+#define RegCreateKeyEx RegCreateKeyExA
+#define RegQueryValueEx RegQueryValueExA
+#define RegSetValueEx RegSetValueExA
 struct FILETIME { DWORD dwLowDateTime, dwHighDateTime; };
 struct WIN32_FIND_DATAA {
   DWORD dwFileAttributes;
@@ -111,6 +133,28 @@ typedef void* LPITEMIDLIST;
 int  SHGetSpecialFolderLocation(void* hwnd, int csidl, LPITEMIDLIST* ppidl);
 BOOL SHGetPathFromIDListA(LPITEMIDLIST pidl, char* path);
 #define SHGetPathFromIDList SHGetPathFromIDListA
+
+// --- Tier 2: modules (static link — stubs) ----------------------------------
+HMODULE LoadLibraryA(const char* name);
+void*   GetProcAddress(HMODULE mod, const char* name);
+BOOL    FreeLibrary(HMODULE mod);
+DWORD   GetModuleFileNameA(HMODULE mod, char* buf, DWORD size);
+
+// --- Tier 2: threads (single-threaded: CreateThread runs synchronously) ------
+HANDLE CreateThread(void* sec, uint32_t stack, LPTHREAD_START_ROUTINE start,
+                    void* param, DWORD flags, DWORD* threadId);
+DWORD  GetCurrentThreadId(void);
+BOOL   TerminateThread(HANDLE thread, DWORD exitCode);
+
+// --- Tier 2: registry (in-memory key/value store) ---------------------------
+LONG RegOpenKeyExA(HKEY key, const char* subkey, DWORD opts, REGSAM sam, HKEY* result);
+LONG RegCreateKeyExA(HKEY key, const char* subkey, DWORD reserved, char* cls, DWORD opts,
+                     REGSAM sam, void* sec, HKEY* result, DWORD* disposition);
+LONG RegQueryValueExA(HKEY key, const char* name, DWORD* reserved, DWORD* type,
+                      BYTE* data, DWORD* size);
+LONG RegSetValueExA(HKEY key, const char* name, DWORD reserved, DWORD type,
+                    const BYTE* data, DWORD size);
+LONG RegCloseKey(HKEY key);
 
 #ifdef __cplusplus
 }

@@ -66,7 +66,8 @@ The seam a real game plugs into, all via the public surface (see [`docs/INTEGRAT
 - **compatlib** (Win32→POSIX, `docs/COMPATLIB.md` maps the full surface Generals needs, tiered):
   - ✅ **Tier 0** — types umbrella + timing (`timeGetTime`/`GetTickCount`/`QueryPerformance*`/`Sleep`) + `OutputDebugStringA`, all on the one emscripten clock (`compat_smoke`).
   - ✅ **Tier 1** — file I/O (`CreateFile`/`ReadFile`/`WriteFile`/`CloseHandle`/`SetFilePointer`/`GetFileSize`/`GetFileAttributes`), directory enumeration (`FindFirstFile`/`NextFile`/`Close`, `CreateDirectory`, `Get`/`SetCurrentDirectory`), shell-folder stub, and the `GlobalAlloc` family — over POSIX with Windows-path (`\\`→`/`) normalization and `<tchar.h>`-style generic-name macros (`compat_file_smoke`).
-  - Tiers 2–4 (module/thread/registry, D3DX, sockets/COM/VFW) grow against the real build.
+  - ✅ **Tier 2** — modules (`LoadLibrary`/`GetProcAddress`/`FreeLibrary`/`GetModuleFileName`, static-link stubs), threads (`CreateThread` runs synchronously in the single-threaded build; `GetCurrentThreadId`/`TerminateThread`), and registry (`Reg*` over an in-memory key/value store; missing values return NOT_FOUND so the game uses its defaults). `CloseHandle` guards low-integer pseudo-handles. `compat_sys_smoke`.
+  - Tiers 3–4 (D3DX helper lib, sockets/COM/VFW) grow against the real build.
 - **Still game-side (grow on demand):** the higher compatlib tiers, non-blocking main loop conversion, asset wiring, audio.
 
 ## Cross-cutting, ongoing

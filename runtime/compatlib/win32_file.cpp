@@ -69,8 +69,9 @@ BOOL WriteFile(HANDLE h, const void* buf, DWORD count, DWORD* written, void*) {
   if (written) *written = (DWORD)n;
   return n == count;
 }
-BOOL CloseHandle(HANDLE h) {   // Tier 1: file handles only (Find* handles use FindClose)
+BOOL CloseHandle(HANDLE h) {   // file handles (Find* use FindClose)
   if (h == INVALID_HANDLE_VALUE || !h) return 0;
+  if ((uintptr_t)h <= 0xffff) return 1;   // Tier 2 pseudo-handle (thread/module) — no fclose
   return std::fclose((FILE*)h) == 0 ? 1 : 0;
 }
 DWORD SetFilePointer(HANDLE h, LONG dist, LONG* distHigh, DWORD method) {
