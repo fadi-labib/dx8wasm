@@ -298,6 +298,9 @@ struct Device8 : IDirect3DDevice8 {
   uint32_t fvf = 0;
   Texture8* texture = nullptr;
   uint32_t colorOp = D3DTOP_MODULATE;
+  Texture8* texture1 = nullptr;              // 2nd texture stage (terrain multitexture)
+  uint32_t colorOp1 = D3DTOP_DISABLE;        // stage-1 default is DISABLE
+  uint32_t texCoordIndex1 = 1;               // which texcoord set stage 1 samples
   GLenum srcBlend = GL_ONE, dstBlend = GL_ZERO;
   bool alphaTestEnable = false, zWrite = true;
   uint32_t alphaFunc = D3DCMP_ALWAYS;
@@ -380,16 +383,20 @@ struct Device8 : IDirect3DDevice8 {
     indices = n; return D3D_OK;
   }
   HRESULT SetVertexShader(DWORD Handle) override { fvf = Handle; return D3D_OK; }
-  HRESULT SetTexture(DWORD, IDirect3DBaseTexture8* t) override {
+  HRESULT SetTexture(DWORD Stage, IDirect3DBaseTexture8* t) override {
     auto* n = static_cast<Texture8*>(t);
-    if (n) n->AddRef(); if (texture) texture->Release();
-    texture = n; return D3D_OK;
+    Texture8** slot = Stage == 0 ? &texture : (Stage == 1 ? &texture1 : nullptr);
+    if (!slot) return D3D_OK;   // only 2 stages
+    if (n) n->AddRef(); if (*slot) (*slot)->Release();
+    *slot = n; return D3D_OK;
   }
   HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
-    // Single texture stage: state for stage 1+ must NOT touch stage 0. Generals
-    // sets stage-1 COLOROP=DISABLE to turn off the 2nd stage; when the stage index
-    // was ignored that clobbered stage 0's MODULATE and every draw went untextured.
-    if (Stage != 0) return D3D_OK;
+    if (Stage == 1) {   // 2nd texture stage (terrain detail blend)
+      if (Type == D3DTSS_COLOROP) colorOp1 = Value;
+      else if (Type == D3DTSS_TEXCOORDINDEX) texCoordIndex1 = Value & 0xffff;
+      return D3D_OK;
+    }
+    if (Stage != 0) return D3D_OK;   // stages 2+ unused
     if (Type == D3DTSS_COLOROP) {
       switch (Value) {
         case D3DTOP_DISABLE: case D3DTOP_SELECTARG1: case D3DTOP_SELECTARG2:
