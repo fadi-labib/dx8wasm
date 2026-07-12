@@ -489,7 +489,15 @@ struct Device8 : IDirect3DDevice8 {
       viewport = {0, 0, pp->BackBufferWidth, pp->BackBufferHeight, 0.0f, 1.0f}; }
     return D3D_OK;
   }
-  HRESULT GetBackBuffer(UINT, D3DBACKBUFFER_TYPE, IDirect3DSurface8** o) override { if (o) *o = nullptr; warn_once("GetBackBuffer"); return D3DERR_INVALIDCALL; }
+  // Backbuffer as a standalone Surface8 sized to the framebuffer. Enough for the
+  // engine to query its description; pixel readback (glReadPixels) is a later
+  // refinement (the smudge/distortion effects that copy from it).
+  HRESULT GetBackBuffer(UINT, D3DBACKBUFFER_TYPE, IDirect3DSurface8** o) override {
+    if (!o) return D3DERR_INVALIDCALL;
+    UINT bw = viewport.Width ? viewport.Width : 1, bh = viewport.Height ? viewport.Height : 1;
+    *o = new Surface8(bw, bh, D3DFMT_X8R8G8B8);
+    return D3D_OK;
+  }
   HRESULT GetRasterStatus(D3DRASTER_STATUS* s) override { if (s) { s->InVBlank = 0; s->ScanLine = 0; } return D3D_OK; }
   void SetGammaRamp(DWORD, const D3DGAMMARAMP*) override {}
   void GetGammaRamp(D3DGAMMARAMP*) override {}
