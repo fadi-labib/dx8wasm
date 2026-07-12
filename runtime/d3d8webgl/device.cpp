@@ -385,7 +385,11 @@ struct Device8 : IDirect3DDevice8 {
     if (n) n->AddRef(); if (texture) texture->Release();
     texture = n; return D3D_OK;
   }
-  HRESULT SetTextureStageState(DWORD, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
+  HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
+    // Single texture stage: state for stage 1+ must NOT touch stage 0. Generals
+    // sets stage-1 COLOROP=DISABLE to turn off the 2nd stage; when the stage index
+    // was ignored that clobbered stage 0's MODULATE and every draw went untextured.
+    if (Stage != 0) return D3D_OK;
     if (Type == D3DTSS_COLOROP) {
       switch (Value) {
         case D3DTOP_DISABLE: case D3DTOP_SELECTARG1: case D3DTOP_SELECTARG2:
