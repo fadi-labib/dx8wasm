@@ -84,40 +84,106 @@ struct IndexBuffer8 : IDirect3DIndexBuffer8 {
 // Level-0-only A8R8G8B8 texture. CPU staging holds the D3D [B,G,R,A] bytes;
 // UnlockRect uploads them verbatim as GL_RGBA (the .bgra shader swizzle fixes
 // channel order). Nearest + clamp — no mips/filtering until a target needs them.
+struct Surface8;  // fwd: texture mip levels are handed out as surfaces
+
 struct Texture8 : IDirect3DTexture8 {
   ULONG refs = 1;
-  UINT w, h;
-  std::vector<BYTE> cpu;
+  struct Level { UINT w, h; std::vector<BYTE> px; };
+  std::vector<Level> levels;   // mip chain; levels[0] is the base
+  D3DFORMAT fmt;
   GLuint tex = 0;
-  Texture8(UINT width, UINT height) : w(width), h(height), cpu((size_t)width * height * 4) {}
+  // mips==0 => full chain down to 1x1. w() / h() below expose the base level so
+  // the single-level callers (and existing smokes) read the same values as before.
+  Texture8(UINT width, UINT height, UINT mips = 1, D3DFORMAT format = D3DFMT_A8R8G8B8) : fmt(format) {
+    UINT lw = width ? width : 1, lh = height ? height : 1;
+    UINT count = mips ? mips : 0xffffu;
+    for (UINT i = 0; i < count; ++i) {
+      levels.push_back({lw, lh, std::vector<BYTE>((size_t)lw * lh * 4)});
+      if (lw == 1 && lh == 1) break;
+      lw = lw > 1 ? lw / 2 : 1; lh = lh > 1 ? lh / 2 : 1;
+    }
+    if (levels.empty()) levels.push_back({1, 1, std::vector<BYTE>(4)});
+  }
+  UINT w() const { return levels[0].w; }
+  UINT h() const { return levels[0].h; }
   ULONG AddRef() override { return ++refs; }
   ULONG Release() override { ULONG r = --refs; if (!r) delete this; return r; }
   D3D_RESOURCE_STUBS(D3DRTYPE_TEXTURE)
   DWORD SetLOD(DWORD) override { return 0; }
   DWORD GetLOD() override { return 0; }
-  DWORD GetLevelCount() override { return 1; }
-  HRESULT GetLevelDesc(UINT, D3DSURFACE_DESC* d) override {
-    if (d) { std::memset(d, 0, sizeof *d); d->Format = D3DFMT_A8R8G8B8; d->Type = D3DRTYPE_TEXTURE; d->Pool = D3DPOOL_MANAGED; d->Width = w; d->Height = h; }
+  DWORD GetLevelCount() override { return (DWORD)levels.size(); }
+  HRESULT GetLevelDesc(UINT l, D3DSURFACE_DESC* d) override {
+    if (!d || l >= levels.size()) return D3DERR_INVALIDCALL;
+    std::memset(d, 0, sizeof *d); d->Format = fmt; d->Type = D3DRTYPE_TEXTURE;
+    d->Pool = D3DPOOL_MANAGED; d->Width = levels[l].w; d->Height = levels[l].h;
     return D3D_OK;
   }
-  HRESULT GetSurfaceLevel(UINT, IDirect3DSurface8**) override { warn_once("Texture8::GetSurfaceLevel"); return D3DERR_INVALIDCALL; }
-  HRESULT LockRect(UINT, D3DLOCKED_RECT* lr, const RECT*, DWORD) override {
-    if (!lr) return D3DERR_INVALIDCALL;
-    lr->Pitch = (int32_t)(w * 4); lr->pBits = cpu.data(); return D3D_OK;
+  HRESULT GetSurfaceLevel(UINT Level, IDirect3DSurface8** ppSurfaceLevel) override;  // out-of-line (needs Surface8)
+  HRESULT LockRect(UINT l, D3DLOCKED_RECT* lr, const RECT*, DWORD) override {
+    if (!lr || l >= levels.size()) return D3DERR_INVALIDCALL;
+    lr->Pitch = (int32_t)(levels[l].w * 4); lr->pBits = levels[l].px.data(); return D3D_OK;
   }
-  HRESULT UnlockRect(UINT) override {
+  HRESULT UnlockRect(UINT l) override { upload_level(l); return D3D_OK; }
+  // Upload one mip level to GL. Filter/wrap kept NEAREST/CLAMP (unchanged from the
+  // single-level impl) so existing pixel smokes stay bit-identical; real sampler
+  // state is applied elsewhere.
+  void upload_level(UINT l) {
+    if (l >= levels.size()) return;
     if (!tex) glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei)w, (GLsizei)h, 0, GL_RGBA, GL_UNSIGNED_BYTE, cpu.data());
+    glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)levels[l].w, (GLsizei)levels[l].h, 0, GL_RGBA, GL_UNSIGNED_BYTE, levels[l].px.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    return D3D_OK;
   }
   HRESULT AddDirtyRect(const RECT*) override { return D3D_OK; }
   ~Texture8() { if (tex && platform::gl_context_alive()) glDeleteTextures(1, &tex); }
 };
+
+// A surface is either a view onto a Texture8 mip level (parent != null; UnlockRect
+// re-uploads that level) or a standalone CPU image (CreateImageSurface; owns its
+// buffer). The engine's TextureClass loads pixels through this path, and D3DX's
+// LoadSurfaceFromSurface (engine-side CompatLib) just needs LockRect to work.
+struct Surface8 : IDirect3DSurface8 {
+  ULONG refs = 1;
+  D3DFORMAT fmt;
+  UINT w, h;
+  Texture8* parent;        // non-null => texture-level surface
+  UINT level;
+  std::vector<BYTE> own;   // used only when parent == nullptr
+  Surface8(Texture8* p, UINT lvl) : fmt(p->fmt), w(p->levels[lvl].w), h(p->levels[lvl].h), parent(p), level(lvl) { p->AddRef(); }
+  Surface8(UINT width, UINT height, D3DFORMAT format) : fmt(format), w(width), h(height), parent(nullptr), level(0), own((size_t)width * height * 4) {}
+  ~Surface8() { if (parent) parent->Release(); }
+  BYTE* base() { return parent ? parent->levels[level].px.data() : own.data(); }
+  HRESULT QueryInterface(REFIID, void** o) override { if (o) *o = this; return D3D_OK; }
+  ULONG AddRef() override { return ++refs; }
+  ULONG Release() override { ULONG r = --refs; if (!r) delete this; return r; }
+  HRESULT GetDevice(IDirect3DDevice8**) override { return D3DERR_INVALIDCALL; }
+  HRESULT SetPrivateData(REFIID, const void*, DWORD, DWORD) override { return D3D_OK; }
+  HRESULT GetPrivateData(REFIID, void*, DWORD*) override { return D3DERR_INVALIDCALL; }
+  HRESULT FreePrivateData(REFIID) override { return D3D_OK; }
+  HRESULT GetContainer(REFIID, void** o) override { if (o) *o = parent; return parent ? D3D_OK : D3DERR_INVALIDCALL; }
+  HRESULT GetDesc(D3DSURFACE_DESC* d) override {
+    if (!d) return D3DERR_INVALIDCALL;
+    std::memset(d, 0, sizeof *d); d->Format = fmt; d->Type = D3DRTYPE_SURFACE;
+    d->Pool = D3DPOOL_MANAGED; d->Width = w; d->Height = h; return D3D_OK;
+  }
+  HRESULT LockRect(D3DLOCKED_RECT* lr, const RECT* r, DWORD) override {
+    if (!lr) return D3DERR_INVALIDCALL;
+    UINT top = r ? (UINT)r->top : 0, left = r ? (UINT)r->left : 0;
+    lr->Pitch = (int32_t)(w * 4);
+    lr->pBits = base() + (size_t)top * (w * 4) + (size_t)left * 4;
+    return D3D_OK;
+  }
+  HRESULT UnlockRect() override { if (parent) parent->upload_level(level); return D3D_OK; }
+};
+
+HRESULT Texture8::GetSurfaceLevel(UINT Level, IDirect3DSurface8** ppSurfaceLevel) {
+  if (!ppSurfaceLevel || Level >= levels.size()) return D3DERR_INVALIDCALL;
+  *ppSurfaceLevel = new Surface8(this, Level);
+  return D3D_OK;
+}
 
 void set_identity(float* m) {
   std::memset(m, 0, 16 * sizeof(float));
@@ -224,10 +290,10 @@ struct Device8 : IDirect3DDevice8 {
     if (!out) return D3DERR_INVALIDCALL;
     *out = new IndexBuffer8(Length, Format); return D3D_OK;
   }
-  HRESULT CreateTexture(UINT Width, UINT Height, UINT, DWORD, D3DFORMAT Format, D3DPOOL, IDirect3DTexture8** out) override {
+  HRESULT CreateTexture(UINT Width, UINT Height, UINT Levels, DWORD, D3DFORMAT Format, D3DPOOL, IDirect3DTexture8** out) override {
     if (!out) return D3DERR_INVALIDCALL;
     if (Format != D3DFMT_A8R8G8B8 && Format != D3DFMT_X8R8G8B8) coverage::unhandled_format(Format);
-    *out = new Texture8(Width, Height); return D3D_OK;
+    *out = new Texture8(Width, Height, Levels, Format); return D3D_OK;  // Levels==0 => full mip chain
   }
   HRESULT SetStreamSource(UINT, IDirect3DVertexBuffer8* vb, UINT Stride) override {
     auto* n = static_cast<VertexBuffer8*>(vb);
@@ -431,9 +497,43 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT CreateCubeTexture(UINT, UINT, DWORD, D3DFORMAT, D3DPOOL, void** o) override { if (o) *o = nullptr; warn_once("CreateCubeTexture"); return D3DERR_INVALIDCALL; }
   HRESULT CreateRenderTarget(UINT, UINT, D3DFORMAT, D3DMULTISAMPLE_TYPE, BOOL, IDirect3DSurface8** o) override { if (o) *o = nullptr; warn_once("CreateRenderTarget"); return D3DERR_INVALIDCALL; }
   HRESULT CreateDepthStencilSurface(UINT, UINT, D3DFORMAT, D3DMULTISAMPLE_TYPE, IDirect3DSurface8** o) override { if (o) *o = nullptr; warn_once("CreateDepthStencilSurface"); return D3DERR_INVALIDCALL; }
-  HRESULT CreateImageSurface(UINT, UINT, D3DFORMAT, IDirect3DSurface8** o) override { if (o) *o = nullptr; warn_once("CreateImageSurface"); return D3DERR_INVALIDCALL; }
-  HRESULT CopyRects(IDirect3DSurface8*, const RECT*, UINT, IDirect3DSurface8*, const POINT*) override { warn_once("CopyRects"); return D3DERR_INVALIDCALL; }
-  HRESULT UpdateTexture(IDirect3DBaseTexture8*, IDirect3DBaseTexture8*) override { warn_once("UpdateTexture"); return D3DERR_INVALIDCALL; }
+  HRESULT CreateImageSurface(UINT Width, UINT Height, D3DFORMAT Format, IDirect3DSurface8** o) override {
+    if (!o) return D3DERR_INVALIDCALL;
+    if (Format != D3DFMT_A8R8G8B8 && Format != D3DFMT_X8R8G8B8) coverage::unhandled_format(Format);
+    *o = new Surface8(Width, Height, Format); return D3D_OK;
+  }
+  // Row-copy src surface region into dst (both 32-bit); re-upload if dst is a
+  // texture level. Rects null => whole surface. dstPoints null => same origin.
+  HRESULT CopyRects(IDirect3DSurface8* src, const RECT* srcRects, UINT n,
+                    IDirect3DSurface8* dst, const POINT* dstPoints) override {
+    auto* s = static_cast<Surface8*>(src); auto* d = static_cast<Surface8*>(dst);
+    if (!s || !d) return D3DERR_INVALIDCALL;
+    UINT count = n ? n : 1;
+    for (UINT i = 0; i < count; ++i) {
+      RECT r = srcRects ? srcRects[i] : RECT{0, 0, (LONG)s->w, (LONG)s->h};
+      POINT p = dstPoints ? dstPoints[i] : POINT{r.left, r.top};
+      UINT rw = (UINT)(r.right - r.left), rh = (UINT)(r.bottom - r.top);
+      for (UINT y = 0; y < rh; ++y) {
+        const BYTE* sp = s->base() + (size_t)(r.top + y) * (s->w * 4) + (size_t)r.left * 4;
+        BYTE* dp = d->base() + (size_t)(p.y + y) * (d->w * 4) + (size_t)p.x * 4;
+        std::memcpy(dp, sp, (size_t)rw * 4);
+      }
+    }
+    if (d->parent) d->parent->upload_level(d->level);
+    return D3D_OK;
+  }
+  // Copy every matching mip level src->dst (CPU) and re-upload each.
+  HRESULT UpdateTexture(IDirect3DBaseTexture8* src, IDirect3DBaseTexture8* dst) override {
+    auto* s = static_cast<Texture8*>(src); auto* d = static_cast<Texture8*>(dst);
+    if (!s || !d) return D3DERR_INVALIDCALL;
+    size_t n = s->levels.size() < d->levels.size() ? s->levels.size() : d->levels.size();
+    for (size_t l = 0; l < n; ++l) {
+      if (s->levels[l].w == d->levels[l].w && s->levels[l].h == d->levels[l].h)
+        d->levels[l].px = s->levels[l].px;
+      d->upload_level((UINT)l);
+    }
+    return D3D_OK;
+  }
   HRESULT GetFrontBuffer(IDirect3DSurface8*) override { warn_once("GetFrontBuffer"); return D3DERR_INVALIDCALL; }
   HRESULT SetRenderTarget(IDirect3DSurface8*, IDirect3DSurface8*) override { return D3D_OK; }
   HRESULT GetRenderTarget(IDirect3DSurface8** o) override { if (o) *o = nullptr; return D3DERR_INVALIDCALL; }
