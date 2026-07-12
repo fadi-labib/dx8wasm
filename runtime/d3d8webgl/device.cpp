@@ -12,6 +12,13 @@
 #include <cstring>
 #include <vector>
 
+// Debug counters (integration bring-up): draw submissions, bind-pipeline failures,
+// and clears. Exported so the platform seam's frame probe can report them.
+long g_dx8_draws = 0, g_dx8_bindfail = 0, g_dx8_clears = 0;
+extern "C" void dx8wasm_debug_counts(long* draws, long* bindfail, long* clears) {
+  if (draws) *draws = g_dx8_draws; if (bindfail) *bindfail = g_dx8_bindfail; if (clears) *clears = g_dx8_clears;
+}
+
 namespace {
 void warn_once(const char* what) {   // one line per distinct unimplemented method
   static const char* seen[64]; static int n = 0;
@@ -266,6 +273,7 @@ struct Device8 : IDirect3DDevice8 {
   }
 
   HRESULT Clear(DWORD, const D3DRECT*, DWORD Flags, D3DCOLOR c, float, DWORD) override {
+    g_dx8_clears++;
     GLbitfield mask = 0;
     if (Flags & D3DCLEAR_TARGET) {
       glClearColor(((c >> 16) & 0xff) / 255.0f, ((c >> 8) & 0xff) / 255.0f,
@@ -295,7 +303,11 @@ struct Device8 : IDirect3DDevice8 {
     if (Format != D3DFMT_A8R8G8B8 && Format != D3DFMT_X8R8G8B8) coverage::unhandled_format(Format);
     *out = new Texture8(Width, Height, Levels, Format); return D3D_OK;  // Levels==0 => full mip chain
   }
-  HRESULT SetStreamSource(UINT, IDirect3DVertexBuffer8* vb, UINT Stride) override {
+  HRESULT SetStreamSource(UINT StreamNumber, IDirect3DVertexBuffer8* vb, UINT Stride) override {
+    // Single-stream fixed-function pipeline: only stream 0 is used. The engine's
+    // Apply_Render_State_Changes clears streams 1..N with SetStreamSource(i,null);
+    // those must NOT clobber stream 0 (they did when the stream index was ignored).
+    if (StreamNumber != 0) return D3D_OK;
     auto* n = static_cast<VertexBuffer8*>(vb);
     if (n) n->AddRef(); if (stream) stream->Release();
     stream = n; stride = Stride; return D3D_OK;
@@ -418,12 +430,13 @@ struct Device8 : IDirect3DDevice8 {
   // currently-bound GL_ARRAY_BUFFER at the given stride. Shared by the buffer and
   // user-pointer draw paths. Returns false if no program supports the state.
   bool bind_pipeline(GLsizei vstride) {
+    g_dx8_draws++;
     glViewport((GLint)viewport.X, (GLint)viewport.Y, (GLsizei)viewport.Width, (GLsizei)viewport.Height);
     const bool textured = (fvf & D3DFVF_TEX1) && texture;
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
     const uint32_t af = alphaTestEnable ? alphaFunc : 0;
     const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af, lit, fogEnable);
-    if (!p) return false;
+    if (!p) { g_dx8_bindfail++; return false; }
     glUseProgram(p->prog);
     glUniformMatrix4fv(p->uWorld, 1, GL_FALSE, world);
     glUniformMatrix4fv(p->uView, 1, GL_FALSE, view);
