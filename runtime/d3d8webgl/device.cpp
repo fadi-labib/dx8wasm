@@ -143,6 +143,70 @@ inline void decode(const BYTE* src, UINT w, UINT h, D3DFORMAT f, BYTE* dst /* w*
 }
 } // namespace dxt
 
+// Uncompressed texture formats. The engine (WW3D textureloader) loads many
+// textures as 16-bit (A4R4G4B4/R5G6B5/A1R5G5B5) or 24-bit (R8G8B8), not just
+// 32-bit A8R8G8B8 — Get_Valid_Texture_Format hands us whatever the caps allow.
+// We stage at the source's true bytes-per-pixel (so LockRect pitch matches what
+// the engine writes) and expand to the same [B,G,R,A] byte order the 32-bit
+// path uses, so the shader's .bgra swizzle recovers correct color. Without this,
+// 16-bit rows were read as 32-bit → the terrain rainbow-noise.
+namespace texfmt {
+inline UINT bpp(D3DFORMAT f) {
+  switch (f) {
+    case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: return 4;
+    case D3DFMT_R8G8B8:   return 3;
+    case D3DFMT_R5G6B5: case D3DFMT_X1R5G5B5: case D3DFMT_A1R5G5B5:
+    case D3DFMT_A4R4G4B4: case D3DFMT_X4R4G4B4: case D3DFMT_A8L8: return 2;
+    case D3DFMT_A8: case D3DFMT_L8: return 1;
+    default: return 4;   // unknown: treat as 32-bit (verbatim), matches old behavior
+  }
+}
+// True for formats uploaded verbatim as GL_RGBA (already [B,G,R,A] in memory).
+inline bool is_bgra32(D3DFORMAT f) { return f == D3DFMT_A8R8G8B8 || f == D3DFMT_X8R8G8B8; }
+// Formats to_bgra() knows how to expand (bpp() otherwise defaults unknowns to 4).
+inline bool supported(D3DFORMAT f) {
+  switch (f) {
+    case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_R8G8B8:
+    case D3DFMT_R5G6B5: case D3DFMT_X1R5G5B5: case D3DFMT_A1R5G5B5:
+    case D3DFMT_A4R4G4B4: case D3DFMT_X4R4G4B4: case D3DFMT_A8L8:
+    case D3DFMT_A8: case D3DFMT_L8: return true;
+    default: return false;
+  }
+}
+inline BYTE e5(uint32_t v) { return (BYTE)((v * 255 + 15) / 31); }
+inline BYTE e6(uint32_t v) { return (BYTE)((v * 255 + 31) / 63); }
+inline BYTE e4(uint32_t v) { return (BYTE)(v * 17); }
+// Expand a tightly-packed source image (w*h*bpp) to dst (w*h*4) as [B,G,R,A].
+inline void to_bgra(const BYTE* src, UINT w, UINT h, D3DFORMAT f, BYTE* dst) {
+  const size_t n = (size_t)w * h;
+  const UINT bp = bpp(f);
+  for (size_t i = 0; i < n; ++i) {
+    BYTE b = 0, g = 0, r = 0, a = 255;
+    const BYTE* s = src + i * bp;
+    if (bp == 2) {
+      uint16_t v = (uint16_t)(s[0] | (s[1] << 8));
+      switch (f) {
+        case D3DFMT_R5G6B5:   r = e5((v>>11)&0x1f); g = e6((v>>5)&0x3f); b = e5(v&0x1f); break;
+        case D3DFMT_X1R5G5B5: r = e5((v>>10)&0x1f); g = e5((v>>5)&0x1f); b = e5(v&0x1f); break;
+        case D3DFMT_A1R5G5B5: a = (v&0x8000)?255:0; r = e5((v>>10)&0x1f); g = e5((v>>5)&0x1f); b = e5(v&0x1f); break;
+        case D3DFMT_A4R4G4B4: a = e4((v>>12)&0xf); r = e4((v>>8)&0xf); g = e4((v>>4)&0xf); b = e4(v&0xf); break;
+        case D3DFMT_X4R4G4B4: r = e4((v>>8)&0xf); g = e4((v>>4)&0xf); b = e4(v&0xf); break;
+        case D3DFMT_A8L8:     a = s[1]; r = g = b = s[0]; break;
+        default: break;
+      }
+    } else if (bp == 3) {           // R8G8B8: memory order B,G,R
+      b = s[0]; g = s[1]; r = s[2];
+    } else if (bp == 1) {
+      if (f == D3DFMT_A8) { a = s[0]; r = g = b = 255; }  // alpha-only, color white
+      else                { r = g = b = s[0]; }           // L8: luminance
+    } else {                        // 4 bpp non-BGRA (shouldn't reach; verbatim path handles A8R8G8B8/X8R8G8B8)
+      b = s[0]; g = s[1]; r = s[2]; a = s[3];
+    }
+    BYTE* d = dst + i * 4; d[0] = b; d[1] = g; d[2] = r; d[3] = a;
+  }
+}
+} // namespace texfmt
+
 struct Texture8 : IDirect3DTexture8 {
   ULONG refs = 1;
   struct Level { UINT w, h; std::vector<BYTE> px; };
@@ -156,7 +220,7 @@ struct Texture8 : IDirect3DTexture8 {
     UINT count = mips ? mips : 0xffffu;
     const bool compressed = dxt::is_dxt(format);
     for (UINT i = 0; i < count; ++i) {
-      size_t bytes = compressed ? dxt::data_size(lw, lh, format) : (size_t)lw * lh * 4;
+      size_t bytes = compressed ? dxt::data_size(lw, lh, format) : (size_t)lw * lh * texfmt::bpp(format);
       levels.push_back({lw, lh, std::vector<BYTE>(bytes)});
       if (lw == 1 && lh == 1) break;
       lw = lw > 1 ? lw / 2 : 1; lh = lh > 1 ? lh / 2 : 1;
@@ -182,7 +246,7 @@ struct Texture8 : IDirect3DTexture8 {
     if (!lr || l >= levels.size()) return D3DERR_INVALIDCALL;
     // DXT pitch is bytes per ROW OF BLOCKS; uncompressed is bytes per pixel row.
     lr->Pitch = dxt::is_dxt(fmt) ? (int32_t)(((levels[l].w + 3) / 4) * dxt::block_bytes(fmt))
-                                 : (int32_t)(levels[l].w * 4);
+                                 : (int32_t)(levels[l].w * texfmt::bpp(fmt));
     lr->pBits = levels[l].px.data(); return D3D_OK;
   }
   HRESULT UnlockRect(UINT l) override { upload_level(l); return D3D_OK; }
@@ -198,8 +262,12 @@ struct Texture8 : IDirect3DTexture8 {
       std::vector<BYTE> rgba((size_t)L.w * L.h * 4);   // CPU-decompress DXT -> RGBA
       dxt::decode(L.px.data(), L.w, L.h, fmt, rgba.data());
       glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-    } else {
+    } else if (texfmt::is_bgra32(fmt)) {
       glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, L.px.data());
+    } else {
+      std::vector<BYTE> rgba((size_t)L.w * L.h * 4);   // expand 16/24/8-bit -> [B,G,R,A]
+      texfmt::to_bgra(L.px.data(), L.w, L.h, fmt, rgba.data());
+      glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
     }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -222,7 +290,7 @@ struct Surface8 : IDirect3DSurface8 {
   UINT level;
   std::vector<BYTE> own;   // used only when parent == nullptr
   Surface8(Texture8* p, UINT lvl) : fmt(p->fmt), w(p->levels[lvl].w), h(p->levels[lvl].h), parent(p), level(lvl) { p->AddRef(); }
-  Surface8(UINT width, UINT height, D3DFORMAT format) : fmt(format), w(width), h(height), parent(nullptr), level(0), own((size_t)width * height * 4) {}
+  Surface8(UINT width, UINT height, D3DFORMAT format) : fmt(format), w(width), h(height), parent(nullptr), level(0), own((size_t)width * height * texfmt::bpp(format)) {}
   ~Surface8() { if (parent) parent->Release(); }
   BYTE* base() { return parent ? parent->levels[level].px.data() : own.data(); }
   HRESULT QueryInterface(REFIID, void** o) override { if (o) *o = this; return D3D_OK; }
@@ -241,8 +309,9 @@ struct Surface8 : IDirect3DSurface8 {
   HRESULT LockRect(D3DLOCKED_RECT* lr, const RECT* r, DWORD) override {
     if (!lr) return D3DERR_INVALIDCALL;
     UINT top = r ? (UINT)r->top : 0, left = r ? (UINT)r->left : 0;
-    lr->Pitch = (int32_t)(w * 4);
-    lr->pBits = base() + (size_t)top * (w * 4) + (size_t)left * 4;
+    const UINT bp = texfmt::bpp(fmt);
+    lr->Pitch = (int32_t)(w * bp);
+    lr->pBits = base() + (size_t)top * (w * bp) + (size_t)left * bp;
     return D3D_OK;
   }
   HRESULT UnlockRect() override { if (parent) parent->upload_level(level); return D3D_OK; }
@@ -365,8 +434,8 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT CreateTexture(UINT Width, UINT Height, UINT Levels, DWORD, D3DFORMAT Format, D3DPOOL, IDirect3DTexture8** out) override {
     if (!out) return D3DERR_INVALIDCALL;
-    if (Format != D3DFMT_A8R8G8B8 && Format != D3DFMT_X8R8G8B8 && !dxt::is_dxt(Format)) coverage::unhandled_format(Format);
-    *out = new Texture8(Width, Height, Levels, Format); return D3D_OK;  // Levels==0 => full mip chain; DXT decoded on upload
+    if (!dxt::is_dxt(Format) && !texfmt::supported(Format)) coverage::unhandled_format(Format);
+    *out = new Texture8(Width, Height, Levels, Format); return D3D_OK;  // Levels==0 => full mip chain; DXT/16-bit decoded on upload
   }
   HRESULT SetStreamSource(UINT StreamNumber, IDirect3DVertexBuffer8* vb, UINT Stride) override {
     // Single-stream fixed-function pipeline: only stream 0 is used. The engine's
@@ -597,7 +666,7 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT CreateDepthStencilSurface(UINT, UINT, D3DFORMAT, D3DMULTISAMPLE_TYPE, IDirect3DSurface8** o) override { if (o) *o = nullptr; warn_once("CreateDepthStencilSurface"); return D3DERR_INVALIDCALL; }
   HRESULT CreateImageSurface(UINT Width, UINT Height, D3DFORMAT Format, IDirect3DSurface8** o) override {
     if (!o) return D3DERR_INVALIDCALL;
-    if (Format != D3DFMT_A8R8G8B8 && Format != D3DFMT_X8R8G8B8) coverage::unhandled_format(Format);
+    if (!texfmt::supported(Format)) coverage::unhandled_format(Format);
     *o = new Surface8(Width, Height, Format); return D3D_OK;
   }
   // Row-copy src surface region into dst (both 32-bit); re-upload if dst is a

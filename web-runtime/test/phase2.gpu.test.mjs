@@ -27,6 +27,7 @@ const SMOKES = [
   ['drawup_smoke', [255, 0, 255, 255]],       // DrawPrimitiveUP (user-pointer strip), no VB
   ['surface_smoke', [255, 0, 0, 255]],         // texture upload via surface path (CreateImageSurface+CopyRects+GetSurfaceLevel)
   ['dxt_smoke', [255, 0, 0, 255]],             // DXT1 (S3TC) compressed texture decode
+  ['texfmt_smoke', [255, 0, 0, 255]],          // 16-bit A4R4G4B4 texture decode (terrain rainbow-noise fix)
   ['draw_smoke', [51, 204, 102, 255]],   // FVF quad, 0xFF33CC66 -> R=51 G=204 B=102
   ['draw_tex_smoke', [128, 128, 64, 255]], // diffuse(.502,1,1) * texel(1,.502,.251) modulate
   ['coverage_smoke', [1, 1, 1, 3]],        // 1 unhandled RS/TOP/FMT each, callback fired 3x
