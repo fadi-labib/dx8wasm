@@ -51,6 +51,9 @@ using REFIID = const GUID&;
 #define D3DFVF_SPECULAR 0x0080u
 #define D3DFVF_TEX1     0x0100u
 #define D3DFVF_TEX2     0x0200u
+// Texture-coordinate count is a 4-bit field, not a bitmask: sets = (fvf & MASK) >> SHIFT.
+#define D3DFVF_TEXCOUNT_MASK  0x0f00u
+#define D3DFVF_TEXCOUNT_SHIFT 8u
 
 // --- Enums (values are the public API; enums may be sparse) ------------------
 enum D3DDEVTYPE { D3DDEVTYPE_HAL = 1, D3DDEVTYPE_REF = 2, D3DDEVTYPE_SW = 3 };

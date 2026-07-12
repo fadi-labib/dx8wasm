@@ -197,7 +197,7 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
 } // namespace
 
 const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, bool lit, bool fog) {
-  const bool hasTex = fvf & D3DFVF_TEX1;
+  const bool hasTex = (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;  // any texcoord set (TEX1/TEX2/...)
   if (!hasTex) colorOp = 0;   // op is irrelevant without a texture — collapse the key
   const uint64_t key = ((uint64_t)fog << 49) | ((uint64_t)lit << 48) | ((uint64_t)alphaFunc << 40) |
                        ((uint64_t)colorOp << 20) | fvf;

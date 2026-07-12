@@ -432,7 +432,11 @@ struct Device8 : IDirect3DDevice8 {
   bool bind_pipeline(GLsizei vstride) {
     g_dx8_draws++;
     glViewport((GLint)viewport.X, (GLint)viewport.Y, (GLsizei)viewport.Width, (GLsizei)viewport.Height);
-    const bool textured = (fvf & D3DFVF_TEX1) && texture;
+    // FVF texcoord count is (fvf>>8)&0xf sets (D3DFVF_TEX1=0x100, TEX2=0x200, ...),
+    // NOT a bitmask. The engine's 2D UI uses TEX2 (0x200); a `& D3DFVF_TEX1` test
+    // wrongly reads that as untextured. Treat any texcoord set as "has UVs".
+    const int texcoords = (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;
+    const bool textured = texcoords > 0 && texture;
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
     const uint32_t af = alphaTestEnable ? alphaFunc : 0;
     const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af, lit, fogEnable);
@@ -449,7 +453,7 @@ struct Device8 : IDirect3DDevice8 {
     else glDisableVertexAttribArray(3);
     if (fvf & D3DFVF_DIFFUSE) { glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, vstride, (void*)(uintptr_t)off); off += 4; }
     else glDisableVertexAttribArray(1);
-    if (fvf & D3DFVF_TEX1) { glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)off); }
+    if (texcoords > 0) { glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)off); }  // sample the first UV set
     else glDisableVertexAttribArray(2);
     if (textured) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture->tex); glUniform1i(p->uTex, 0); }
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
