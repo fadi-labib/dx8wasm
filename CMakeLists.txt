@@ -65,6 +65,12 @@ target_link_libraries(surface_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(surface_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(surface_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(dxt_smoke runtime/test/dxt_smoke.cpp)
+target_include_directories(dxt_smoke PRIVATE runtime runtime/d3d8)
+target_link_libraries(dxt_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(dxt_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(dxt_smoke PROPERTIES SUFFIX ".js")
+
 add_executable(draw_smoke runtime/test/draw_smoke.cpp)
 target_include_directories(draw_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(draw_smoke PRIVATE dx8_d3d8webgl)

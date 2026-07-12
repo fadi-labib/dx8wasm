@@ -93,6 +93,56 @@ struct IndexBuffer8 : IDirect3DIndexBuffer8 {
 // channel order). Nearest + clamp — no mips/filtering until a target needs them.
 struct Surface8;  // fwd: texture mip levels are handed out as surfaces
 
+// DXT/S3TC block decompression (Generals' terrain/unit textures are DXT1/3/5).
+// Decoded to the same [B,G,R,A] byte order the RGBA path uses, so the shader's
+// .bgra swizzle recovers the correct color. CPU decode keeps it portable (no
+// reliance on the WEBGL_compressed_texture_s3tc extension).
+namespace dxt {
+inline bool is_dxt(D3DFORMAT f) { return f == D3DFMT_DXT1 || f == D3DFMT_DXT3 || f == D3DFMT_DXT5; }
+inline UINT block_bytes(D3DFORMAT f) { return f == D3DFMT_DXT1 ? 8u : 16u; }
+inline size_t data_size(UINT w, UINT h, D3DFORMAT f) { return (size_t)((w + 3) / 4) * ((h + 3) / 4) * block_bytes(f); }
+inline void rgb565(uint16_t c, int& r, int& g, int& b) {
+  r = (((c >> 11) & 0x1f) * 255 + 15) / 31; g = (((c >> 5) & 0x3f) * 255 + 31) / 63; b = ((c & 0x1f) * 255 + 15) / 31;
+}
+// Decode the 8-byte color half of a block (shared by DXT1/3/5) into dst[BGRA].
+// alpha16 supplies per-pixel alpha for DXT3/5; null => DXT1 (1-bit punch-through).
+inline void color_block(const BYTE* b, BYTE* dst, UINT texW, UINT texH, UINT bx, UINT by, const BYTE* alpha16) {
+  uint16_t c0 = (uint16_t)(b[0] | (b[1] << 8)), c1 = (uint16_t)(b[2] | (b[3] << 8));
+  int r[4], g[4], bl[4]; rgb565(c0, r[0], g[0], bl[0]); rgb565(c1, r[1], g[1], bl[1]);
+  bool punch = !alpha16 && c0 <= c1;   // DXT1 with 1-bit alpha
+  if (!punch) { r[2] = (2*r[0]+r[1])/3; g[2] = (2*g[0]+g[1])/3; bl[2] = (2*bl[0]+bl[1])/3;
+                r[3] = (r[0]+2*r[1])/3; g[3] = (g[0]+2*g[1])/3; bl[3] = (bl[0]+2*bl[1])/3; }
+  else        { r[2] = (r[0]+r[1])/2;   g[2] = (g[0]+g[1])/2;   bl[2] = (bl[0]+bl[1])/2;
+                r[3] = 0; g[3] = 0; bl[3] = 0; }
+  uint32_t idx = (uint32_t)b[4] | ((uint32_t)b[5] << 8) | ((uint32_t)b[6] << 16) | ((uint32_t)b[7] << 24);
+  for (int py = 0; py < 4; py++) for (int px = 0; px < 4; px++) {
+    UINT x = bx*4+px, y = by*4+py; if (x >= texW || y >= texH) continue;
+    int i = (idx >> (2*(py*4+px))) & 3;
+    int a = alpha16 ? alpha16[py*4+px] : (punch && i == 3 ? 0 : 255);
+    BYTE* d = dst + ((size_t)y*texW + x)*4;
+    d[0] = (BYTE)bl[i]; d[1] = (BYTE)g[i]; d[2] = (BYTE)r[i]; d[3] = (BYTE)a;   // B,G,R,A
+  }
+}
+inline void dxt5_alpha(const BYTE* b, BYTE* out16) {
+  int a0 = b[0], a1 = b[1], al[8]; al[0] = a0; al[1] = a1;
+  if (a0 > a1) for (int i = 1; i < 7; i++) al[i+1] = ((7-i)*a0 + i*a1) / 7;
+  else { for (int i = 1; i < 5; i++) al[i+1] = ((5-i)*a0 + i*a1) / 5; al[6] = 0; al[7] = 255; }
+  uint64_t bits = 0; for (int i = 0; i < 6; i++) bits |= (uint64_t)b[2+i] << (8*i);
+  for (int i = 0; i < 16; i++) out16[i] = (BYTE)al[(bits >> (3*i)) & 7];
+}
+inline void decode(const BYTE* src, UINT w, UINT h, D3DFORMAT f, BYTE* dst /* w*h*4 */) {
+  UINT bw = (w + 3) / 4, bh = (h + 3) / 4, bb = block_bytes(f);
+  for (UINT by = 0; by < bh; by++) for (UINT bx = 0; bx < bw; bx++) {
+    const BYTE* blk = src + ((size_t)by*bw + bx) * bb;
+    if (f == D3DFMT_DXT1) { color_block(blk, dst, w, h, bx, by, nullptr); continue; }
+    BYTE a16[16];
+    if (f == D3DFMT_DXT5) dxt5_alpha(blk, a16);
+    else for (int i = 0; i < 16; i++) a16[i] = (BYTE)(((blk[i/2] >> ((i&1)*4)) & 0xf) * 17);  // DXT3 explicit
+    color_block(blk + 8, dst, w, h, bx, by, a16);
+  }
+}
+} // namespace dxt
+
 struct Texture8 : IDirect3DTexture8 {
   ULONG refs = 1;
   struct Level { UINT w, h; std::vector<BYTE> px; };
@@ -104,8 +154,10 @@ struct Texture8 : IDirect3DTexture8 {
   Texture8(UINT width, UINT height, UINT mips = 1, D3DFORMAT format = D3DFMT_A8R8G8B8) : fmt(format) {
     UINT lw = width ? width : 1, lh = height ? height : 1;
     UINT count = mips ? mips : 0xffffu;
+    const bool compressed = dxt::is_dxt(format);
     for (UINT i = 0; i < count; ++i) {
-      levels.push_back({lw, lh, std::vector<BYTE>((size_t)lw * lh * 4)});
+      size_t bytes = compressed ? dxt::data_size(lw, lh, format) : (size_t)lw * lh * 4;
+      levels.push_back({lw, lh, std::vector<BYTE>(bytes)});
       if (lw == 1 && lh == 1) break;
       lw = lw > 1 ? lw / 2 : 1; lh = lh > 1 ? lh / 2 : 1;
     }
@@ -128,7 +180,10 @@ struct Texture8 : IDirect3DTexture8 {
   HRESULT GetSurfaceLevel(UINT Level, IDirect3DSurface8** ppSurfaceLevel) override;  // out-of-line (needs Surface8)
   HRESULT LockRect(UINT l, D3DLOCKED_RECT* lr, const RECT*, DWORD) override {
     if (!lr || l >= levels.size()) return D3DERR_INVALIDCALL;
-    lr->Pitch = (int32_t)(levels[l].w * 4); lr->pBits = levels[l].px.data(); return D3D_OK;
+    // DXT pitch is bytes per ROW OF BLOCKS; uncompressed is bytes per pixel row.
+    lr->Pitch = dxt::is_dxt(fmt) ? (int32_t)(((levels[l].w + 3) / 4) * dxt::block_bytes(fmt))
+                                 : (int32_t)(levels[l].w * 4);
+    lr->pBits = levels[l].px.data(); return D3D_OK;
   }
   HRESULT UnlockRect(UINT l) override { upload_level(l); return D3D_OK; }
   // Upload one mip level to GL. Filter/wrap kept NEAREST/CLAMP (unchanged from the
@@ -138,7 +193,14 @@ struct Texture8 : IDirect3DTexture8 {
     if (l >= levels.size()) return;
     if (!tex) glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)levels[l].w, (GLsizei)levels[l].h, 0, GL_RGBA, GL_UNSIGNED_BYTE, levels[l].px.data());
+    const Level& L = levels[l];
+    if (dxt::is_dxt(fmt)) {
+      std::vector<BYTE> rgba((size_t)L.w * L.h * 4);   // CPU-decompress DXT -> RGBA
+      dxt::decode(L.px.data(), L.w, L.h, fmt, rgba.data());
+      glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    } else {
+      glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, L.px.data());
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -300,8 +362,8 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT CreateTexture(UINT Width, UINT Height, UINT Levels, DWORD, D3DFORMAT Format, D3DPOOL, IDirect3DTexture8** out) override {
     if (!out) return D3DERR_INVALIDCALL;
-    if (Format != D3DFMT_A8R8G8B8 && Format != D3DFMT_X8R8G8B8) coverage::unhandled_format(Format);
-    *out = new Texture8(Width, Height, Levels, Format); return D3D_OK;  // Levels==0 => full mip chain
+    if (Format != D3DFMT_A8R8G8B8 && Format != D3DFMT_X8R8G8B8 && !dxt::is_dxt(Format)) coverage::unhandled_format(Format);
+    *out = new Texture8(Width, Height, Levels, Format); return D3D_OK;  // Levels==0 => full mip chain; DXT decoded on upload
   }
   HRESULT SetStreamSource(UINT StreamNumber, IDirect3DVertexBuffer8* vb, UINT Stride) override {
     // Single-stream fixed-function pipeline: only stream 0 is used. The engine's
