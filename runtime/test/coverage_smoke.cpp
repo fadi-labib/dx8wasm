@@ -29,7 +29,7 @@ int main() {
   // Three distinct unhandled tokens. D3DRS_FILLMODE stays unimplemented, so this
   // smoke is stable as later slices implement other render states.
   dev->SetRenderState(D3DRS_FILLMODE, 2 /* wireframe */);
-  dev->SetTextureStageState(0, D3DTSS_COLOROP, 10 /* D3DTOP_SUBTRACT, unimplemented */);   // -> fallback
+  dev->SetTextureStageState(0, D3DTSS_COLOROP, 25 /* D3DTOP_MULTIPLYADD, unimplemented */);   // -> fallback
   IDirect3DTexture8* tex = nullptr;
   dev->CreateTexture(2, 2, 1, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, &tex);   // unsupported format
 

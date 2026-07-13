@@ -16,8 +16,8 @@ GLuint compile(GLenum type, const std::string& src) {
   glShaderSource(s, 1, &p, nullptr);
   glCompileShader(s);
   GLint ok = 0; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
-  if (!ok) { char log[512]; glGetShaderInfoLog(s, sizeof log, nullptr, log);
-             std::fprintf(stderr, "[graphics-ff] shader compile failed: %s\n", log); }
+  if (!ok) { char log[1024]; glGetShaderInfoLog(s, sizeof log, nullptr, log);
+             std::fprintf(stderr, "[graphics-ff] shader compile failed: %s\n--- src ---\n%s\n", log, p); }
   return s;
 }
 
@@ -35,20 +35,88 @@ const char* alpha_cmp(uint32_t func) {
   }
 }
 
-// Assemble the GLSL from the state flags. D3DCOLOR arrives as [B,G,R,A] bytes
-// (both diffuse attribute and A8R8G8B8 texel), so every color source is read
-// back with a .bgra swizzle to recover RGBA. Matrices are D3D row-major uploaded
-// as-is (GL reads the transpose), hence proj*view*world — correct for D3D.
-Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc, bool lit, bool fog, bool rhw) {
-  const bool outColor = lit || hasDiffuse;   // vertex emits an interpolated color
+// One combiner argument. Low nibble selects the source (DIFFUSE reads the vertex/
+// lit color, CURRENT the running accumulator, TEXTURE the stage texel, TFACTOR
+// the D3DRS_TEXTUREFACTOR, SPECULAR the vertex specular — 0 here, dx8wasm folds
+// specular into the lit color). Modifiers: ALPHAREPLICATE (.aaaa) then COMPLEMENT
+// (1-x). The Generals road-noise pass leans on DIFFUSE|ALPHAREPLICATE to build white.
+std::string combiner_arg(uint32_t arg, const std::string& texExpr) {
+  std::string e;
+  switch (arg & D3DTA_SELECTMASK) {
+    case D3DTA_DIFFUSE:  e = "diffuse"; break;
+    case D3DTA_CURRENT:  e = "cur"; break;
+    case D3DTA_TEXTURE:  e = texExpr; break;
+    case D3DTA_TFACTOR:  e = "uTFactor"; break;
+    case D3DTA_SPECULAR: e = "spec"; break;
+    default:             e = "diffuse"; break;
+  }
+  if (arg & D3DTA_ALPHAREPLICATE) e = "vec4(" + e + ".a)";
+  if (arg & D3DTA_COMPLEMENT)     e = "(vec4(1.0) - " + e + ")";
+  return e;
+}
+
+// One combiner op over the two prepared args. D3D saturates its results, so the
+// scaling/adding ops clamp. texAlphaExpr is the stage texel's alpha (for
+// BLENDTEXTUREALPHA). Unknown ops fall back to MODULATE (logged at bind time).
+std::string combiner_op(uint32_t op, const std::string& a1, const std::string& a2,
+                        const std::string& texAlphaExpr) {
+  switch (op) {
+    case D3DTOP_SELECTARG1:       return a1;
+    case D3DTOP_SELECTARG2:       return a2;
+    case D3DTOP_MODULATE:         return "(" + a1 + " * " + a2 + ")";
+    case D3DTOP_MODULATE2X:       return "min((" + a1 + " * " + a2 + ") * 2.0, vec4(1.0))";
+    case D3DTOP_MODULATE4X:       return "min((" + a1 + " * " + a2 + ") * 4.0, vec4(1.0))";
+    case D3DTOP_ADD:              return "min(" + a1 + " + " + a2 + ", vec4(1.0))";
+    case D3DTOP_ADDSIGNED:        return "clamp(" + a1 + " + " + a2 + " - 0.5, 0.0, 1.0)";
+    case D3DTOP_ADDSIGNED2X:      return "clamp((" + a1 + " + " + a2 + " - 0.5) * 2.0, 0.0, 1.0)";
+    case D3DTOP_SUBTRACT:         return "max(" + a1 + " - " + a2 + ", vec4(0.0))";
+    case D3DTOP_ADDSMOOTH:        return "(" + a1 + " + " + a2 + " - " + a1 + " * " + a2 + ")";
+    case D3DTOP_BLENDTEXTUREALPHA: return "mix(" + a2 + ", " + a1 + ", " + texAlphaExpr + ")";
+    case D3DTOP_BLENDDIFFUSEALPHA: return "mix(" + a2 + ", " + a1 + ", diffuse.a)";
+    case D3DTOP_BLENDCURRENTALPHA: return "mix(" + a2 + ", " + a1 + ", cur.a)";
+    case D3DTOP_BLENDFACTORALPHA:  return "mix(" + a2 + ", " + a1 + ", uTFactor.a)";
+    case D3DTOP_DOTPRODUCT3:
+      return "vec4(vec3(clamp(dot(" + a1 + ".rgb - 0.5, " + a2 + ".rgb - 0.5) * 4.0, 0.0, 1.0)), 1.0)";
+    default:                      return "(" + a1 + " * " + a2 + ")";
+  }
+}
+
+// Assemble the GLSL from the full key. D3DCOLOR arrives as [B,G,R,A] bytes (both
+// diffuse attribute and A8R8G8B8 texel), so every color source is read back with
+// a .bgra swizzle to recover RGBA. uTFactor is uploaded already RGBA-ordered, so
+// it needs no swizzle. Matrices are D3D row-major uploaded as-is (GL reads the
+// transpose), hence proj*view*world (and texMat * uv) — correct for D3D.
+Program build(const Key& k) {
+  const uint32_t fvf = k.fvf;
+  const bool rhw = fvf & D3DFVF_XYZRHW;         // pre-transformed screen-space vertices
+  const bool hasDiffuse = fvf & D3DFVF_DIFFUSE;
+  const bool lit = k.lit;
+  const bool fog = k.fog;
+  const bool outColor = lit || hasDiffuse;      // vertex emits an interpolated color
+  const int texcount = (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;
+  const int texIn = texcount > 2 ? 2 : texcount;   // vertex uv sets we wire up (cap 2)
+
+  int stagesUsed = 0;
+  for (int s = 0; s < 2; s++) if (k.stage[s].colorOp != D3DTOP_DISABLE) stagesUsed = s + 1;
+  const bool anyTex = stagesUsed > 0;
+  bool anyTexgen = false, useMat[2] = {false, false};
+  for (int s = 0; s < stagesUsed; s++) {
+    if (k.stage[s].texgen && !rhw) anyTexgen = true;
+    if ((k.stage[s].xform || (k.stage[s].texgen && !rhw))) useMat[s] = true;
+  }
+
+  // ---------------- vertex shader ----------------
   std::string vs = "#version 300 es\n";
   vs += rhw ? "layout(location=0) in vec4 aPos;\n"   // pre-transformed: x,y screen px; z depth; w=rhw
             : "layout(location=0) in vec3 aPos;\n";
-  if (hasDiffuse) vs += "layout(location=1) in vec4 aColor;\n";
-  if (hasTex)     vs += "layout(location=2) in vec2 aUV;\n";
-  if (lit)        vs += "layout(location=3) in vec3 aNormal;\n";
+  if (hasDiffuse)          vs += "layout(location=1) in vec4 aColor;\n";
+  if (anyTex && texIn > 0) vs += "layout(location=2) in vec2 aUV0;\n";
+  if (lit)                 vs += "layout(location=3) in vec3 aNormal;\n";
+  if (anyTex && texIn > 1) vs += "layout(location=4) in vec2 aUV1;\n";
   if (rhw) vs += "uniform vec2 uViewport;\n";
   else     vs += "uniform mat4 uWorld, uView, uProj;\n";
+  if (useMat[0]) vs += "uniform mat4 uTexMat0;\n";
+  if (useMat[1]) vs += "uniform mat4 uTexMat1;\n";
   if (lit) vs +=
     "const int MAXL = " + std::to_string(MAX_LIGHTS) + ";\n"
     "uniform int uLightCount;\n"
@@ -67,7 +135,7 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     "uniform float uMatPower;\n";
   if (fog) vs += "uniform float uFogStart, uFogEnd;\nout float vFog;\n";
   if (outColor) vs += "out vec4 vColor;\n";
-  if (hasTex)   vs += "out vec2 vUV;\n";
+  for (int s = 0; s < stagesUsed; s++) vs += "out vec2 vUV" + std::to_string(s) + ";\n";
   vs += "void main(){\n";
   if (rhw) vs +=
     // Pre-transformed: aPos is in screen pixels (D3D top-left origin), so map to
@@ -75,6 +143,8 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     "  gl_Position = vec4(aPos.x/uViewport.x*2.0 - 1.0, 1.0 - aPos.y/uViewport.y*2.0, aPos.z*2.0 - 1.0, 1.0);\n";
   else vs +=
     "  gl_Position = uProj*uView*uWorld*vec4(aPos,1.0);\n";
+  if (anyTexgen)                                   // view-space position for camera-space texgen
+    vs += "  vec3 viewPos = (uView*uWorld*vec4(aPos,1.0)).xyz;\n";
   if (fog) {
     // Linear fog: 1 = no fog (near), 0 = full fog (far). Pre-transformed vertices
     // use their supplied depth directly; transformed ones use eye-space depth.
@@ -102,8 +172,8 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     "      if (uLightType[i] == 2) {\n"            // spot cone falloff (theta inner, phi outer)
     "        float rho = dot(-hitDir, uSpotDir[i]);\n"
     "        float ct = uSpotParams[i].x, cp = uSpotParams[i].y, fo = uSpotParams[i].z;\n"
-    "        float spot = rho <= cp ? 0.0 : (rho >= ct ? 1.0 : pow((rho - cp) / (ct - cp), fo));\n"
-    "        atten *= spot;\n"
+    "        float spotf = rho <= cp ? 0.0 : (rho >= ct ? 1.0 : pow((rho - cp) / (ct - cp), fo));\n"
+    "        atten *= spotf;\n"
     "      }\n"
     "    }\n"
     "    float nl = dot(N, hitDir);\n"
@@ -119,55 +189,76 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
     "  c.a = uMatDiffuse.a;\n"
     "  vColor = clamp(c, 0.0, 1.0);\n";
   else if (hasDiffuse) vs += "  vColor = aColor.bgra;\n";
-  if (hasTex) vs += "  vUV = aUV;\n";
+  // Per-stage texcoords: camera-space texgen, or the selected vertex uv set,
+  // each optionally run through the stage texture matrix.
+  for (int s = 0; s < stagesUsed; s++) {
+    const std::string S = std::to_string(s);
+    const Stage& st = k.stage[s];
+    const int tci = (int)st.tci < texIn ? (int)st.tci : 0;
+    const std::string mat = "uTexMat" + S;
+    if (st.texgen && !rhw) {
+      // D3DTSS_TCI_CAMERASPACEPOSITION: uv = texture matrix * view-space position.
+      vs += "  vUV" + S + " = (" + mat + " * vec4(viewPos, 1.0)).xy;\n";
+    } else if (texIn == 0) {
+      vs += "  vUV" + S + " = vec2(0.0);\n";
+    } else if (st.xform) {
+      vs += "  vUV" + S + " = (" + mat + " * vec4(aUV" + std::to_string(tci) + ", 0.0, 1.0)).xy;\n";
+    } else {
+      vs += "  vUV" + S + " = aUV" + std::to_string(tci) + ";\n";
+    }
+  }
   vs += "}\n";
 
-  std::string color;
-  if (lit) {
-    // Per-vertex Gouraud lit color, modulated by the stage-0 texture when present
-    // (D3DTOP_MODULATE of the lit diffuse with the texel — terrain/units path).
-    color = hasTex ? "vColor * texture(uTex, vUV).bgra" : "vColor";
-  } else if (hasTex) {
-    // Single-stage combiner over the default args: arg1 = texture, arg2 = diffuse
-    // (D3DTA_DIFFUSE; white when the FVF has no diffuse). D3D saturates results.
-    const std::string t = "texture(uTex, vUV).bgra";
-    const std::string a2 = hasDiffuse ? "vColor" : "vec4(1.0)";
-    switch (colorOp) {
-      case D3DTOP_SELECTARG1:  color = t; break;
-      case D3DTOP_SELECTARG2:  color = a2; break;
-      case D3DTOP_MODULATE2X:  color = "2.0 * " + a2 + " * " + t; break;
-      case D3DTOP_MODULATE4X:  color = "4.0 * " + a2 + " * " + t; break;
-      case D3DTOP_ADD:         color = a2 + " + " + t; break;
-      case D3DTOP_ADDSIGNED:   color = a2 + " + " + t + " - 0.5"; break;
-      default: /* MODULATE */  color = a2 + " * " + t; break;
-    }
-  } else {
-    color = hasDiffuse ? "vColor" : "vec4(1.0)";
-  }
-
+  // ---------------- fragment shader ----------------
   std::string fs = "#version 300 es\nprecision mediump float;\n";
   if (outColor) fs += "in vec4 vColor;\n";
-  if (hasTex)   fs += "in vec2 vUV;\nuniform sampler2D uTex;\n";
-  if (fog)      fs += "in float vFog;\nuniform vec3 uFogColor;\n";
-  const bool alphaTest = alphaFunc != 0 && alphaFunc != D3DCMP_ALWAYS;
+  for (int s = 0; s < stagesUsed; s++) fs += "in vec2 vUV" + std::to_string(s) + ";\n";
+  if (stagesUsed > 0 && k.stage[0].hasTex) fs += "uniform sampler2D uTex;\n";
+  if (stagesUsed > 1 && k.stage[1].hasTex) fs += "uniform sampler2D uTex1;\n";
+  if (anyTex) fs += "uniform vec4 uTFactor;\n";       // D3DRS_TEXTUREFACTOR (RGBA)
+  if (fog)    fs += "in float vFog;\nuniform vec3 uFogColor;\n";
+  const bool alphaTest = k.alphaFunc != 0 && k.alphaFunc != D3DCMP_ALWAYS;
   if (alphaTest) fs += "uniform float uAlphaRef;\n";
-  fs += "out vec4 frag;\nvoid main(){ vec4 c = " + color + ";\n";
-  if (alphaTest) {
-    if (alphaFunc == D3DCMP_NEVER)      fs += "  discard;\n";
-    else if (const char* op = alpha_cmp(alphaFunc)) fs += std::string("  if (!(c.a ") + op + " uAlphaRef)) discard;\n";
+  fs += "out vec4 frag;\nvoid main(){\n";
+  fs += std::string("  vec4 diffuse = ") + (outColor ? "vColor" : "vec4(1.0)") + ";\n";
+  fs += "  vec4 spec = vec4(0.0);\n";
+  fs += "  vec4 cur = diffuse;\n";
+  // Chain the enabled stages: `cur` accumulates stage 0 then stage 1. rgb comes
+  // from the color op, alpha from the alpha op (DISABLE keeps the prior alpha).
+  for (int s = 0; s < stagesUsed; s++) {
+    const Stage& st = k.stage[s];
+    const std::string sampler = s == 0 ? "uTex" : "uTex1";
+    const std::string texv = "tex" + std::to_string(s);
+    if (st.hasTex)
+      fs += "  vec4 " + texv + " = texture(" + sampler + ", vUV" + std::to_string(s) + ").bgra;\n";
+    const std::string ta = texv + ".a";
+    std::string colorExpr = combiner_op(st.colorOp,
+        combiner_arg(st.colorArg1, texv), combiner_arg(st.colorArg2, texv), ta);
+    std::string alphaExpr = st.alphaOp == D3DTOP_DISABLE ? std::string("cur")
+        : combiner_op(st.alphaOp, combiner_arg(st.alphaArg1, texv), combiner_arg(st.alphaArg2, texv), ta);
+    fs += "  cur = vec4((" + colorExpr + ").rgb, (" + alphaExpr + ").a);\n";
   }
-  if (fog) fs += "  c.rgb = mix(uFogColor, c.rgb, vFog);\n";   // fog blends colour, leaves alpha
-  fs += "  frag = c; }\n";
+  if (alphaTest) {
+    if (k.alphaFunc == D3DCMP_NEVER)      fs += "  discard;\n";
+    else if (const char* op = alpha_cmp(k.alphaFunc)) fs += std::string("  if (!(cur.a ") + op + " uAlphaRef)) discard;\n";
+  }
+  if (fog) fs += "  cur.rgb = mix(uFogColor, cur.rgb, vFog);\n";   // fog blends colour, leaves alpha
+  fs += "  frag = cur; }\n";
 
   GLuint v = compile(GL_VERTEX_SHADER, vs), f = compile(GL_FRAGMENT_SHADER, fs);
   GLuint p = glCreateProgram();
   glAttachShader(p, v); glAttachShader(p, f); glLinkProgram(p);
   glDeleteShader(v); glDeleteShader(f);
   Program prog; prog.prog = p;
+  prog.stagesUsed = stagesUsed;
   prog.uWorld    = glGetUniformLocation(p, "uWorld");
   prog.uView     = glGetUniformLocation(p, "uView");
   prog.uProj     = glGetUniformLocation(p, "uProj");
   prog.uTex      = glGetUniformLocation(p, "uTex");
+  prog.uTex1     = glGetUniformLocation(p, "uTex1");
+  prog.uTexMat0  = glGetUniformLocation(p, "uTexMat0");
+  prog.uTexMat1  = glGetUniformLocation(p, "uTexMat1");
+  prog.uTFactor  = glGetUniformLocation(p, "uTFactor");
   prog.uAlphaRef = glGetUniformLocation(p, "uAlphaRef");
   prog.uLightCount    = glGetUniformLocation(p, "uLightCount");
   prog.uLightType     = glGetUniformLocation(p, "uLightType[0]");
@@ -194,36 +285,38 @@ Program build(bool hasDiffuse, bool hasTex, uint32_t colorOp, uint32_t alphaFunc
   return prog;
 }
 
+// FNV-1a over the state that changes the generated GLSL. Argument MODIFIER bits
+// (COMPLEMENT/ALPHAREPLICATE) and per-stage tci/texgen/xform must all discriminate
+// — different terrain passes must not reuse the wrong shader.
+uint64_t hash_key(const Key& k) {
+  uint64_t h = 0xcbf29ce484222325ull;
+  auto put = [&](uint64_t v) { h ^= v + 0x9E37u; h *= 0x100000001b3ull; };
+  put(k.fvf);
+  put(k.alphaFunc);
+  put((k.lit ? 1u : 0u) | (k.fog ? 2u : 0u));
+  for (int s = 0; s < 2; s++) {
+    const Stage& st = k.stage[s];
+    put(st.colorOp); put(st.colorArg1); put(st.colorArg2);
+    put(st.alphaOp); put(st.alphaArg1); put(st.alphaArg2);
+    put(st.tci); put(st.texgen); put((st.xform ? 1u : 0u) | (st.hasTex ? 2u : 0u));
+  }
+  return h;
+}
+
 } // namespace
 
-const Program* program_for(uint32_t fvf, uint32_t colorOp, uint32_t alphaFunc, bool lit, bool fog) {
-  bool hasTex = (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;  // any texcoord set (TEX1/TEX2/...)
-  // A disabled stage-0 color op means "no texturing" even if the vertex carries
-  // texcoords (Generals draws terrain/geometry passes this way): render untextured
-  // (diffuse only) rather than dropping the draw.
-  if (colorOp == D3DTOP_DISABLE) hasTex = false;
-  if (!hasTex) colorOp = 0;   // op is irrelevant without a texture — collapse the key
-  const uint64_t key = ((uint64_t)fog << 49) | ((uint64_t)lit << 48) | ((uint64_t)alphaFunc << 40) |
-                       ((uint64_t)colorOp << 20) | fvf;
-
-  auto it = g_cache.find(key);
-  if (it != g_cache.end()) return &it->second;
-
-  const bool hasDiffuse = fvf & D3DFVF_DIFFUSE;
-  const bool rhw = fvf & D3DFVF_XYZRHW;   // pre-transformed screen-space vertices
-  // ponytail: XYZ (or XYZRHW) base plus optional DIFFUSE/TEX1 with MODULATE|
-  // SELECTARG1, or a lit variant (requires NORMAL, untextured, non-rhw).
-  const bool supported = (fvf & D3DFVF_XYZ) || rhw;
-  const bool opOk = colorOp == D3DTOP_MODULATE || colorOp == D3DTOP_SELECTARG1 ||
-      colorOp == D3DTOP_SELECTARG2 || colorOp == D3DTOP_MODULATE2X || colorOp == D3DTOP_MODULATE4X ||
-      colorOp == D3DTOP_ADD || colorOp == D3DTOP_ADDSIGNED;
-  const bool ok = supported && (!hasTex || opOk) &&
-      (!lit || ((fvf & D3DFVF_NORMAL) && !rhw));   // lit may now be textured (modulate)
+const Program* program_for(const Key& k) {
+  const bool rhw = k.fvf & D3DFVF_XYZRHW;   // pre-transformed screen-space vertices
+  const bool supported = (k.fvf & D3DFVF_XYZ) || rhw;
+  const bool ok = supported && (!k.lit || ((k.fvf & D3DFVF_NORMAL) && !rhw));
   if (!ok) {
-    std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x colorOp %u lit %d\n", fvf, colorOp, (int)lit);
+    std::fprintf(stderr, "[graphics-ff] no program for FVF 0x%08x lit %d\n", k.fvf, (int)k.lit);
     return nullptr;
   }
-  auto r = g_cache.emplace(key, build(hasDiffuse, hasTex, colorOp, alphaFunc, lit, fog, rhw));
+  const uint64_t key = hash_key(k);
+  auto it = g_cache.find(key);
+  if (it != g_cache.end()) return &it->second;
+  auto r = g_cache.emplace(key, build(k));
   return &r.first->second;
 }
 

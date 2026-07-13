@@ -10,7 +10,7 @@ Scope: the fixed-function subset a DirectX-8 game (target: C&C Generals) needs.
 "fallback" means the token is safely ignored/substituted and logged via the
 coverage layer — never silently wrong.
 
-## Render states (21/26 handled)
+## Render states (22/26 handled)
 
 | State | Status |
 |-------|--------|
@@ -39,7 +39,7 @@ coverage layer — never silently wrong.
 | `D3DRS_ZBIAS` | ✅ handled |
 | `D3DRS_SHADEMODE` | ✅ handled |
 | `D3DRS_STENCILENABLE` | ⚠️ fallback |
-| `D3DRS_TEXTUREFACTOR` | ⚠️ fallback |
+| `D3DRS_TEXTUREFACTOR` | ✅ handled |
 
 ## Texture-stage color ops (6/6 handled)
 
@@ -52,15 +52,15 @@ coverage layer — never silently wrong.
 | `D3DTOP_MODULATE2X` | ✅ handled |
 | `D3DTOP_ADDSIGNED` | ✅ handled |
 
-## Texture formats (2/5 handled)
+## Texture formats (5/5 handled)
 
 | Format | Status |
 |--------|--------|
 | `D3DFMT_A8R8G8B8` | ✅ handled |
 | `D3DFMT_X8R8G8B8` | ✅ handled |
-| `D3DFMT_R5G6B5` | ⚠️ fallback |
-| `D3DFMT_A8` | ⚠️ fallback |
-| `D3DFMT_DXT1` | ⚠️ fallback |
+| `D3DFMT_R5G6B5` | ✅ handled |
+| `D3DFMT_A8` | ✅ handled |
+| `D3DFMT_DXT1` | ✅ handled |
 
 ## Feature coverage
 

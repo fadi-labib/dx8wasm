@@ -365,13 +365,22 @@ struct Device8 : IDirect3DDevice8 {
   IndexBuffer8* indices = nullptr;
   UINT stride = 0;
   uint32_t fvf = 0;
-  Texture8* texture = nullptr;
-  uint32_t colorOp = D3DTOP_MODULATE;
-  uint32_t texCoordIndex0 = 0;               // which vertex texcoord set stage 0 samples (low 16 bits of D3DTSS_TEXCOORDINDEX)
-  uint32_t texGen0 = 0;                       // texgen mode (high bits of D3DTSS_TEXCOORDINDEX); non-zero = camera-space gen (unsupported)
-  Texture8* texture1 = nullptr;              // 2nd texture stage (terrain multitexture)
-  uint32_t colorOp1 = D3DTOP_DISABLE;        // stage-1 default is DISABLE
-  uint32_t texCoordIndex1 = 1;               // which texcoord set stage 1 samples
+  Texture8* texture = nullptr;               // stage 0 texture
+  Texture8* texture1 = nullptr;              // stage 1 texture (terrain multitexture)
+  // Full per-stage combiner + texcoord state (D3DTSS_*), initialized to the D3D8
+  // defaults: stage 0 modulates the texel with the diffuse/current color and
+  // selects the texel alpha; stage 1 is disabled. SetTextureStageState overrides.
+  struct StageState {
+    uint32_t colorOp, colorArg1, colorArg2, alphaOp, alphaArg1, alphaArg2;
+    uint32_t tci;      // low 16 bits of D3DTSS_TEXCOORDINDEX: which vertex uv set feeds the stage
+    uint32_t texgen;   // high bits (>>16): 0 none, else a D3DTSS_TCI_* texgen mode
+    uint32_t ttff;     // D3DTSS_TEXTURETRANSFORMFLAGS (COUNTn enables the stage matrix)
+  } stageState[2] = {
+    { D3DTOP_MODULATE, D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_SELECTARG1, D3DTA_TEXTURE, D3DTA_CURRENT, 0, 0, 0 },
+    { D3DTOP_DISABLE,  D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_DISABLE,    D3DTA_TEXTURE, D3DTA_CURRENT, 1, 0, 0 },
+  };
+  float texMat[2][16];                       // D3DTS_TEXTURE0 / D3DTS_TEXTURE0+1 (row-major, uploaded as-is)
+  float texFactor[4] = {0, 0, 0, 0};         // D3DRS_TEXTUREFACTOR as RGBA floats
   GLenum srcBlend = GL_ONE, dstBlend = GL_ZERO;
   bool alphaTestEnable = false, zWrite = true;
   uint32_t alphaFunc = D3DCMP_ALWAYS;
@@ -390,6 +399,7 @@ struct Device8 : IDirect3DDevice8 {
 
   Device8(int w, int h) : vpW((float)w), vpH((float)h) {
     set_identity(world); set_identity(view); set_identity(proj);
+    set_identity(texMat[0]); set_identity(texMat[1]);
     viewport = {0, 0, (DWORD)w, (DWORD)h, 0.0f, 1.0f};
     glDepthFunc(GL_LEQUAL);
   }
@@ -461,21 +471,32 @@ struct Device8 : IDirect3DDevice8 {
     if (n) n->AddRef(); if (*slot) (*slot)->Release();
     *slot = n; return D3D_OK;
   }
-  HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
-    if (Stage == 1) {   // 2nd texture stage (terrain detail blend)
-      if (Type == D3DTSS_COLOROP) colorOp1 = Value;
-      else if (Type == D3DTSS_TEXCOORDINDEX) texCoordIndex1 = Value & 0xffff;
-      return D3D_OK;
+  // Ops the multi-stage combiner (graphics-ff) can emit. Anything else is stored
+  // (the shader falls back to MODULATE) but reported to the coverage layer.
+  static bool combiner_op_supported(DWORD op) {
+    switch (op) {
+      case D3DTOP_DISABLE: case D3DTOP_SELECTARG1: case D3DTOP_SELECTARG2:
+      case D3DTOP_MODULATE: case D3DTOP_MODULATE2X: case D3DTOP_MODULATE4X:
+      case D3DTOP_ADD: case D3DTOP_ADDSIGNED: case D3DTOP_ADDSIGNED2X:
+      case D3DTOP_SUBTRACT: case D3DTOP_ADDSMOOTH: case D3DTOP_BLENDTEXTUREALPHA:
+      case D3DTOP_BLENDDIFFUSEALPHA: case D3DTOP_BLENDCURRENTALPHA:
+      case D3DTOP_BLENDFACTORALPHA: case D3DTOP_DOTPRODUCT3: return true;
+      default: return false;
     }
-    if (Stage != 0) return D3D_OK;   // stages 2+ unused
-    if (Type == D3DTSS_TEXCOORDINDEX) { texCoordIndex0 = Value & 0xffff; texGen0 = Value & 0xffff0000u; return D3D_OK; }
-    if (Type == D3DTSS_COLOROP) {
-      switch (Value) {
-        case D3DTOP_DISABLE: case D3DTOP_SELECTARG1: case D3DTOP_SELECTARG2:
-        case D3DTOP_MODULATE: case D3DTOP_MODULATE2X: case D3DTOP_MODULATE4X:
-        case D3DTOP_ADD: case D3DTOP_ADDSIGNED: colorOp = Value; break;
-        default: coverage::unhandled_texture_op(Value); colorOp = D3DTOP_MODULATE;
-      }
+  }
+  HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
+    if (Stage > 1) return D3D_OK;   // only 2 stages are wired into the combiner
+    StageState& s = stageState[Stage];
+    switch (Type) {
+      case D3DTSS_COLOROP:   if (!combiner_op_supported(Value)) coverage::unhandled_texture_op(Value); s.colorOp = Value; break;
+      case D3DTSS_ALPHAOP:   if (!combiner_op_supported(Value)) coverage::unhandled_texture_op(Value); s.alphaOp = Value; break;
+      case D3DTSS_COLORARG1: s.colorArg1 = Value; break;
+      case D3DTSS_COLORARG2: s.colorArg2 = Value; break;
+      case D3DTSS_ALPHAARG1: s.alphaArg1 = Value; break;
+      case D3DTSS_ALPHAARG2: s.alphaArg2 = Value; break;
+      case D3DTSS_TEXCOORDINDEX:          s.tci = Value & 0xffff; s.texgen = (Value >> 16) & 0xffff; break;
+      case D3DTSS_TEXTURETRANSFORMFLAGS:  s.ttff = Value; break;
+      default: break;   // sampler filters/address handled at texture upload; others ignored
     }
     return D3D_OK;
   }
@@ -509,6 +530,9 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_AMBIENT:
         globalAmbient[0] = ((Value >> 16) & 0xff) / 255.0f; globalAmbient[1] = ((Value >> 8) & 0xff) / 255.0f;
         globalAmbient[2] = (Value & 0xff) / 255.0f; globalAmbient[3] = ((Value >> 24) & 0xff) / 255.0f; break;
+      case D3DRS_TEXTUREFACTOR:   // ARGB -> RGBA floats for the combiner's TFACTOR arg
+        texFactor[0] = ((Value >> 16) & 0xff) / 255.0f; texFactor[1] = ((Value >> 8) & 0xff) / 255.0f;
+        texFactor[2] = (Value & 0xff) / 255.0f; texFactor[3] = ((Value >> 24) & 0xff) / 255.0f; break;
       default: coverage::unhandled_render_state(State); break;
     }
     return D3D_OK;
@@ -524,7 +548,11 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) override {
     if (!pMatrix) return D3DERR_INVALIDCALL;
     float* dst = State == D3DTS_WORLD ? world : State == D3DTS_VIEW ? view : State == D3DTS_PROJECTION ? proj : nullptr;
-    if (!dst) return D3D_OK;   // texture/other transforms ignored for now
+    // Stage texture matrices (D3DTS_TEXTURE0 = 16, stage 1 = 17). The terrain
+    // macro/cloud passes drive these together with camera-space texgen.
+    if (!dst && (State == D3DTS_TEXTURE0 || State == D3DTS_TEXTURE0 + 1))
+      dst = texMat[State - D3DTS_TEXTURE0];
+    if (!dst) return D3D_OK;   // other transforms ignored for now
     std::memcpy(dst, pMatrix->m, 16 * sizeof(float)); return D3D_OK;
   }
   HRESULT SetViewport(const D3DVIEWPORT8* v) override { if (v) viewport = *v; return D3D_OK; }
@@ -574,6 +602,15 @@ struct Device8 : IDirect3DDevice8 {
   // Select the FF program, upload uniforms, and bind vertex attributes from the
   // currently-bound GL_ARRAY_BUFFER at the given stride. Shared by the buffer and
   // user-pointer draw paths. Returns false if no program supports the state.
+  // Translate a stored D3DTSS_TEXCOORDINDEX texgen mode (high bits, already >>16)
+  // into the shader's texgen code. Only camera-space position (the terrain macro/
+  // cloud pass) is generated; reflection/normal fall back to the uv set (warned).
+  uint32_t texgen_code(uint32_t mode) {
+    if (mode == 0) return 0;
+    if (mode == (D3DTSS_TCI_CAMERASPACEPOSITION >> 16)) return 1;
+    warn_once("texgen mode (reflection/normal) unsupported");
+    return 0;
+  }
   bool bind_pipeline(GLsizei vstride) {
     g_dx8_draws++;
     glViewport((GLint)viewport.X, (GLint)viewport.Y, (GLsizei)viewport.Width, (GLsizei)viewport.Height);
@@ -581,21 +618,46 @@ struct Device8 : IDirect3DDevice8 {
     // NOT a bitmask. The engine's 2D UI uses TEX2 (0x200); a `& D3DFVF_TEX1` test
     // wrongly reads that as untextured. Treat any texcoord set as "has UVs".
     const int texcoords = (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;
-    const bool textured = texcoords > 0 && texture;
-    // Camera-space texgen (terrain noise/cloud overlay) isn't implemented. Those
-    // passes multiply the framebuffer (DESTCOLOR blend) with a texture sampled at
-    // generated coords; sampling at the wrong coords darkens the whole terrain.
-    // Skipping the overlay beats corrupting the base pass.
-    if (texGen0) { g_dx8_draws++; return false; }
+    const bool rhw = fvf & D3DFVF_XYZRHW;
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
-    const uint32_t af = alphaTestEnable ? alphaFunc : 0;
-    const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af, lit, fogEnable);
+
+    // Build the full program key from the per-stage state. A stage with no texture
+    // collapses (stage 0 -> select the diffuse/current color, stage 1 -> disable)
+    // so an op sourcing TEXTURE never samples an unbound unit.
+    ff::Key key;
+    key.fvf = fvf;
+    key.alphaFunc = alphaTestEnable ? alphaFunc : 0;
+    key.lit = lit;
+    key.fog = fogEnable;
+    for (int s = 0; s < 2; s++) {
+      const StageState& ss = stageState[s];
+      Texture8* stex = s == 0 ? texture : texture1;
+      ff::Stage& ks = key.stage[s];
+      ks.colorOp = ss.colorOp; ks.colorArg1 = ss.colorArg1; ks.colorArg2 = ss.colorArg2;
+      ks.alphaOp = ss.alphaOp; ks.alphaArg1 = ss.alphaArg1; ks.alphaArg2 = ss.alphaArg2;
+      ks.tci = ss.tci & 1;                       // only vertex uv sets 0/1 are wired
+      ks.texgen = texgen_code(ss.texgen);
+      ks.xform = (ss.ttff & 0xff) != 0;          // COUNT1..4 -> apply the stage matrix
+      ks.hasTex = stex != nullptr && texcoords > 0;
+      if (!ks.hasTex) {
+        if (s == 0) { ks.colorOp = D3DTOP_SELECTARG2; ks.colorArg2 = D3DTA_DIFFUSE;
+                      ks.alphaOp = D3DTOP_SELECTARG2; ks.alphaArg2 = D3DTA_DIFFUSE; }
+        else        { ks.colorOp = D3DTOP_DISABLE;    ks.alphaOp = D3DTOP_DISABLE; }
+      }
+    }
+    const ff::Program* p = ff::program_for(key);
     if (!p) { g_dx8_bindfail++; return false; }
     glUseProgram(p->prog);
     glUniformMatrix4fv(p->uWorld, 1, GL_FALSE, world);
     glUniformMatrix4fv(p->uView, 1, GL_FALSE, view);
     glUniformMatrix4fv(p->uProj, 1, GL_FALSE, proj);
-    const bool rhw = fvf & D3DFVF_XYZRHW;
+    if (p->uTexMat0 >= 0) glUniformMatrix4fv(p->uTexMat0, 1, GL_FALSE, texMat[0]);
+    if (p->uTexMat1 >= 0) glUniformMatrix4fv(p->uTexMat1, 1, GL_FALSE, texMat[1]);
+    if (p->uTFactor >= 0) glUniform4fv(p->uTFactor, 1, texFactor);
+
+    // Vertex attributes. Memory layout: pos, [normal], [diffuse], [specular],
+    // then the texcoord sets (2 floats each). Locations: 0 pos, 1 diffuse,
+    // 2 uv-set0, 3 normal, 4 uv-set1 (matches the shader's `layout(location=)`).
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, rhw ? 4 : 3, GL_FLOAT, GL_FALSE, vstride, (void*)0);
     GLuint off = rhw ? 16 : 12;
@@ -603,12 +665,17 @@ struct Device8 : IDirect3DDevice8 {
     else glDisableVertexAttribArray(3);
     if (fvf & D3DFVF_DIFFUSE) { glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, vstride, (void*)(uintptr_t)off); off += 4; }
     else glDisableVertexAttribArray(1);
-    if (texcoords > 0) {   // feed stage 0 the texcoord set its D3DTSS_TEXCOORDINDEX selects
-      const int uvSet = (int)texCoordIndex0 < texcoords ? (int)texCoordIndex0 : 0;
-      glEnableVertexAttribArray(2);
-      glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)(off + (GLuint)uvSet * 2 * sizeof(float)));
-    } else glDisableVertexAttribArray(2);
-    if (textured) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture->tex); glUniform1i(p->uTex, 0); }
+    if (fvf & D3DFVF_SPECULAR) off += 4;         // present in some passes; skipped, keeps uv offsets right
+    const GLuint uvBase = off;
+    if (texcoords > 0) { glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)uvBase); }
+    else glDisableVertexAttribArray(2);
+    if (texcoords > 1) { glEnableVertexAttribArray(4); glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)(uvBase + 2 * sizeof(float))); }
+    else glDisableVertexAttribArray(4);
+
+    // Bind both texture stages (stage 0 -> unit 0, stage 1 -> unit 1).
+    if (p->uTex >= 0) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture ? texture->tex : 0); glUniform1i(p->uTex, 0); }
+    if (p->uTex1 >= 0) { glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, texture1 ? texture1->tex : 0); glUniform1i(p->uTex1, 1); }
+
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
     if (rhw) glUniform2f(p->uViewport, vpW, vpH);
     if (lit) set_light_uniforms(p);
