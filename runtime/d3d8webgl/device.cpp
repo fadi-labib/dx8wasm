@@ -367,6 +367,8 @@ struct Device8 : IDirect3DDevice8 {
   uint32_t fvf = 0;
   Texture8* texture = nullptr;
   uint32_t colorOp = D3DTOP_MODULATE;
+  uint32_t texCoordIndex0 = 0;               // which vertex texcoord set stage 0 samples (low 16 bits of D3DTSS_TEXCOORDINDEX)
+  uint32_t texGen0 = 0;                       // texgen mode (high bits of D3DTSS_TEXCOORDINDEX); non-zero = camera-space gen (unsupported)
   Texture8* texture1 = nullptr;              // 2nd texture stage (terrain multitexture)
   uint32_t colorOp1 = D3DTOP_DISABLE;        // stage-1 default is DISABLE
   uint32_t texCoordIndex1 = 1;               // which texcoord set stage 1 samples
@@ -466,6 +468,7 @@ struct Device8 : IDirect3DDevice8 {
       return D3D_OK;
     }
     if (Stage != 0) return D3D_OK;   // stages 2+ unused
+    if (Type == D3DTSS_TEXCOORDINDEX) { texCoordIndex0 = Value & 0xffff; texGen0 = Value & 0xffff0000u; return D3D_OK; }
     if (Type == D3DTSS_COLOROP) {
       switch (Value) {
         case D3DTOP_DISABLE: case D3DTOP_SELECTARG1: case D3DTOP_SELECTARG2:
@@ -579,6 +582,11 @@ struct Device8 : IDirect3DDevice8 {
     // wrongly reads that as untextured. Treat any texcoord set as "has UVs".
     const int texcoords = (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;
     const bool textured = texcoords > 0 && texture;
+    // Camera-space texgen (terrain noise/cloud overlay) isn't implemented. Those
+    // passes multiply the framebuffer (DESTCOLOR blend) with a texture sampled at
+    // generated coords; sampling at the wrong coords darkens the whole terrain.
+    // Skipping the overlay beats corrupting the base pass.
+    if (texGen0) { g_dx8_draws++; return false; }
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
     const uint32_t af = alphaTestEnable ? alphaFunc : 0;
     const ff::Program* p = ff::program_for(fvf, textured ? colorOp : D3DTOP_DISABLE, af, lit, fogEnable);
@@ -595,8 +603,11 @@ struct Device8 : IDirect3DDevice8 {
     else glDisableVertexAttribArray(3);
     if (fvf & D3DFVF_DIFFUSE) { glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, vstride, (void*)(uintptr_t)off); off += 4; }
     else glDisableVertexAttribArray(1);
-    if (texcoords > 0) { glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)off); }  // sample the first UV set
-    else glDisableVertexAttribArray(2);
+    if (texcoords > 0) {   // feed stage 0 the texcoord set its D3DTSS_TEXCOORDINDEX selects
+      const int uvSet = (int)texCoordIndex0 < texcoords ? (int)texCoordIndex0 : 0;
+      glEnableVertexAttribArray(2);
+      glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)(off + (GLuint)uvSet * 2 * sizeof(float)));
+    } else glDisableVertexAttribArray(2);
     if (textured) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture->tex); glUniform1i(p->uTex, 0); }
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
     if (rhw) glUniform2f(p->uViewport, vpW, vpH);
