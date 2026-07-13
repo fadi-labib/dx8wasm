@@ -382,7 +382,7 @@ struct Device8 : IDirect3DDevice8 {
   float texMat[2][16];                       // D3DTS_TEXTURE0 / D3DTS_TEXTURE0+1 (row-major, uploaded as-is)
   float texFactor[4] = {0, 0, 0, 0};         // D3DRS_TEXTUREFACTOR as RGBA floats
   GLenum srcBlend = GL_ONE, dstBlend = GL_ZERO;
-  bool alphaTestEnable = false, zWrite = true;
+  bool alphaTestEnable = false, zWrite = true, zTest = true;   // zTest = engine's D3DRS_ZENABLE intent
   uint32_t alphaFunc = D3DCMP_ALWAYS;
   DWORD alphaRef = 0;
   float world[16], view[16], proj[16];
@@ -502,7 +502,7 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) override {
     switch (State) {
-      case D3DRS_ZENABLE:          Value ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST); break;
+      case D3DRS_ZENABLE:          zTest = Value != 0; Value ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST); break;
       case D3DRS_ZWRITEENABLE:     zWrite = Value != 0; glDepthMask(zWrite ? GL_TRUE : GL_FALSE); break;
       case D3DRS_ZFUNC:            glDepthFunc(gl_cmpfunc(Value)); break;
       case D3DRS_DITHERENABLE:     Value ? glEnable(GL_DITHER) : glDisable(GL_DITHER); break;
@@ -620,6 +620,12 @@ struct Device8 : IDirect3DDevice8 {
     const int texcoords = (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;
     const bool rhw = fvf & D3DFVF_XYZRHW;
     const bool lit = lighting && (fvf & D3DFVF_NORMAL);
+    // RHW vertices are pre-transformed screen-space overlays (2D UI, HUD). They must
+    // never be depth-tested against the 3D scene, or the terrain's depth buffer
+    // rejects the whole in-game HUD. Force depth off for RHW; restore the engine's
+    // D3DRS_ZENABLE intent for 3D draws.
+    if (rhw) glDisable(GL_DEPTH_TEST);
+    else     zTest ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
 
     // Build the full program key from the per-stage state. A stage with no texture
     // collapses (stage 0 -> select the diffuse/current color, stage 1 -> disable)
