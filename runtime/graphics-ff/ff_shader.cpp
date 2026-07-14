@@ -155,9 +155,11 @@ Program build(const Key& k) {
     // D3D fixed-function lighting is per-vertex (Gouraud), accumulated over the
     // enabled lights. Directional: hitDir = -Direction, atten 1. Point: hitDir
     // toward the light, atten = 1/(a0+a1·d+a2·d²) zeroed past Range (per DXVK).
-    // ponytail: object-space normal (identity/rigid world so far); an
-    // inverse-transpose normal matrix lands when non-uniform-scale world is used.
-    "  vec3 N = normalize(aNormal);\n"
+    // Normal must be in world space to match the world-space lights. mat3(uWorld)
+    // is the same rotation/scale used for position (line below), so a rotated unit
+    // lights correctly. ponytail: uses mat3(world), not the inverse-transpose — exact
+    // for rotation + uniform scale (Generals' case); non-uniform scale would skew it.
+    "  vec3 N = normalize(mat3(uWorld) * aNormal);\n"
     "  vec3 worldPos = (uWorld * vec4(aPos, 1.0)).xyz;\n"
     "  vec4 dsum = vec4(0.0), asum = vec4(0.0), ssum = vec4(0.0);\n"
     "  for (int i = 0; i < uLightCount; i++) {\n"

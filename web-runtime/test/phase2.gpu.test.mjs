@@ -34,6 +34,7 @@ const SMOKES = [
   ['render_state_smoke', [153, 51, 102, 191]], // 50% red over blue bg (depth/cull/alpha checked internally)
   ['light_smoke', [153, 102, 51, 255]],        // directional diffuse: matDiff * lightDiff(0.6,0.4,0.2) at N·L=1
   ['matsource_smoke', [255, 0, 0, 255]],       // COLOR1 material source: lit diffuse from red vertex, not white material
+  ['normal_smoke', [64, 64, 64, 255]],         // world-transformed normal: RotZ90 turns +X normal ⊥ to light -> ambient only
   ['multilight_smoke', [153, 102, 102, 255]],  // two directional lights sum: (0.5,0.1,0)+(0.1,0.3,0.4)=(0.6,0.4,0.4)
   ['point_light_smoke', [227, 227, 227, 255]], // point light, hitDot 0.943 * atten 0.943 = 0.889
   ['spot_light_smoke', [144, 96, 48, 255]],    // spot inside cone: diffuse(0.6,0.4,0.2) * hitDot 0.943
