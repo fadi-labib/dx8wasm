@@ -213,6 +213,7 @@ struct Texture8 : IDirect3DTexture8 {
   std::vector<Level> levels;   // mip chain; levels[0] is the base
   D3DFORMAT fmt;
   GLuint tex = 0;
+  int maxLevel = 0;            // highest mip level actually uploaded (0 => base only)
   // mips==0 => full chain down to 1x1. w() / h() below expose the base level so
   // the single-level callers (and existing smokes) read the same values as before.
   Texture8(UINT width, UINT height, UINT mips = 1, D3DFORMAT format = D3DFMT_A8R8G8B8) : fmt(format) {
@@ -269,6 +270,11 @@ struct Texture8 : IDirect3DTexture8 {
       texfmt::to_bgra(L.px.data(), L.w, L.h, fmt, rgba.data());
       glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
     }
+    // Track the mip chain the engine actually uploads (D3DXFilterTexture downscales
+    // each level via D3DXLoadSurfaceFromSurface -> UnlockRect -> here). MAX_LEVEL is
+    // pinned to what's really present so a mipmap MIN filter stays texture-complete.
+    if ((int)l > maxLevel) maxLevel = (int)l;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, maxLevel);
     // Default to bilinear + wrap (the retail game samples smooth, not blocky).
     // Real per-stage filter/address is applied at bind time (apply_sampler).
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -360,9 +366,18 @@ GLenum gl_blend(DWORD b) {
     default: return GL_ONE;
   }
 }
-// D3D sampler filter/address -> GL. POINT/NONE -> nearest, everything else -> linear
-// (bilinear; mipmaps deferred). WRAP is the default; CLAMP/MIRROR honored.
+// D3D sampler filter/address -> GL. POINT/NONE -> nearest, everything else -> linear.
+// WRAP is the default; CLAMP/MIRROR honored. gl_tex_filter is used for MAG (never
+// mipmapped); MIN goes through gl_min_filter which fuses D3D's separate min+mip knobs
+// into GL's single enum, but only when a real mip chain was uploaded (hasMips).
 inline GLenum gl_tex_filter(uint32_t f) { return (f == D3DTEXF_POINT || f == D3DTEXF_NONE) ? GL_NEAREST : GL_LINEAR; }
+inline GLenum gl_min_filter(uint32_t minF, uint32_t mipF, bool hasMips) {
+  const bool linMin = !(minF == D3DTEXF_POINT || minF == D3DTEXF_NONE);
+  if (!hasMips || mipF == D3DTEXF_NONE) return linMin ? GL_LINEAR : GL_NEAREST;
+  const bool linMip = (mipF == D3DTEXF_LINEAR);   // else POINT: nearest mip
+  if (linMin) return linMip ? GL_LINEAR_MIPMAP_LINEAR  : GL_LINEAR_MIPMAP_NEAREST;
+  return           linMip ? GL_NEAREST_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
+}
 inline GLenum gl_tex_wrap(uint32_t a) {
   switch (a) {
     case D3DTADDRESS_CLAMP:  return GL_CLAMP_TO_EDGE;
@@ -635,8 +650,9 @@ struct Device8 : IDirect3DDevice8 {
     return 0;
   }
   // Apply a stage's sampler filter/address to the currently-bound GL_TEXTURE_2D.
-  void apply_sampler(const StageState& s) {
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gl_tex_filter(s.minFilter));
+  void apply_sampler(const StageState& s, const Texture8* t) {
+    const bool hasMips = t && t->maxLevel > 0;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gl_min_filter(s.minFilter, s.mipFilter, hasMips));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl_tex_filter(s.magFilter));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_tex_wrap(s.addressU));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_tex_wrap(s.addressV));
@@ -710,9 +726,9 @@ struct Device8 : IDirect3DDevice8 {
 
     // Bind both texture stages (stage 0 -> unit 0, stage 1 -> unit 1).
     if (p->uTex >= 0) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture ? texture->tex : 0); glUniform1i(p->uTex, 0);
-      if (texture) apply_sampler(stageState[0]); }
+      if (texture) apply_sampler(stageState[0], texture); }
     if (p->uTex1 >= 0) { glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, texture1 ? texture1->tex : 0); glUniform1i(p->uTex1, 1);
-      if (texture1) apply_sampler(stageState[1]); }
+      if (texture1) apply_sampler(stageState[1], texture1); }
 
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
     if (rhw) glUniform2f(p->uViewport, vpW, vpH);
