@@ -420,6 +420,12 @@ struct Device8 : IDirect3DDevice8 {
   DWORD alphaRef = 0;
   float world[16], view[16], proj[16];
   bool lighting = false, specularEnable = false;
+  // Material color sources (D3DRS_*MATERIALSOURCE). D3D8 defaults: COLORVERTEX on,
+  // diffuse from vertex COLOR1, ambient/emissive from the material. Generals bakes
+  // scene lighting into the vertex diffuse and leaves material diffuse white, so
+  // honoring COLOR1 here is what stops lit geometry blowing out to full white.
+  bool colorVertex = true;
+  uint32_t diffuseSource = D3DMCS_COLOR1, ambientSource = D3DMCS_MATERIAL, emissiveSource = D3DMCS_MATERIAL;
   float globalAmbient[4] = {0, 0, 0, 0};
   D3DLIGHT8 lights[ff::MAX_LIGHTS]{};
   bool lightOn[ff::MAX_LIGHTS] = {false};
@@ -556,6 +562,10 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_ALPHAREF:         alphaRef = Value; break;
       case D3DRS_ALPHAFUNC:        alphaFunc = Value; break;
       case D3DRS_LIGHTING:         lighting = Value != 0; break;
+      case D3DRS_COLORVERTEX:      colorVertex = Value != 0; break;
+      case D3DRS_DIFFUSEMATERIALSOURCE:  diffuseSource = Value; break;
+      case D3DRS_AMBIENTMATERIALSOURCE:  ambientSource = Value; break;
+      case D3DRS_EMISSIVEMATERIALSOURCE: emissiveSource = Value; break;
       case D3DRS_SPECULARENABLE:   specularEnable = Value != 0; break;
       case D3DRS_FOGENABLE:        fogEnable = Value != 0; break;
       case D3DRS_FOGSTART:         fogStart = as_float(Value); break;
@@ -681,6 +691,13 @@ struct Device8 : IDirect3DDevice8 {
     key.alphaFunc = alphaTestEnable ? alphaFunc : 0;
     key.lit = lit;
     key.fog = fogEnable;
+    // COLOR1 material sources only apply when lit and the vertex actually carries a
+    // diffuse color; otherwise fall back to the material uniform (skinned meshes ship
+    // diffuse=0, so gating on FVF diffuse avoids blacking them out).
+    const bool cvOn = colorVertex && (fvf & D3DFVF_DIFFUSE);
+    key.diffFromVertex = lit && cvOn && diffuseSource == D3DMCS_COLOR1;
+    key.ambFromVertex  = lit && cvOn && ambientSource == D3DMCS_COLOR1;
+    key.emisFromVertex = lit && cvOn && emissiveSource == D3DMCS_COLOR1;
     for (int s = 0; s < 2; s++) {
       const StageState& ss = stageState[s];
       Texture8* stex = s == 0 ? texture : texture1;

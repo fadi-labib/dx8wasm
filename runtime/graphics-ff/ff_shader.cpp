@@ -183,11 +183,21 @@ Program build(const Key& k) {
     "      vec3 H = normalize(hitDir + vec3(0.0, 0.0, 1.0));\n"
     "      ssum += uLightSpecular[i] * (pow(max(dot(N, H), 0.0), uMatPower) * atten);\n"
     "    }\n"
-    "  }\n"
-    "  vec4 c = uMatEmissive + uMatAmbient*(uGlobalAmbient + asum) + uMatDiffuse*dsum;\n"
-    "  c.rgb += (uMatSpecular * ssum).rgb;\n"
-    "  c.a = uMatDiffuse.a;\n"
-    "  vColor = clamp(c, 0.0, 1.0);\n";
+    "  }\n";
+  // Material color sources: D3DMCS_COLOR1 reads the component from the vertex diffuse
+  // (aColor is [B,G,R,A], so .bgra/.bgr recovers RGB(A)); otherwise the material
+  // uniform. This is the over-bright fix — Generals bakes scene lighting into the
+  // vertex diffuse and leaves the material diffuse white, so without this every lit
+  // surface multiplies by white and blows out.
+  if (lit) {
+    vs += k.diffFromVertex ? "  vec4 matDiff = aColor.bgra;\n" : "  vec4 matDiff = uMatDiffuse;\n";
+    vs += k.ambFromVertex  ? "  vec3 matAmb = aColor.bgr;\n"   : "  vec3 matAmb = uMatAmbient.rgb;\n";
+    vs += k.emisFromVertex ? "  vec3 matEmis = aColor.bgr;\n"  : "  vec3 matEmis = uMatEmissive.rgb;\n";
+    vs +=
+      "  vec4 c = vec4(matEmis + matAmb*(uGlobalAmbient.rgb + asum.rgb) + matDiff.rgb*dsum.rgb, matDiff.a);\n"
+      "  c.rgb += (uMatSpecular * ssum).rgb;\n"
+      "  vColor = clamp(c, 0.0, 1.0);\n";
+  }
   else if (hasDiffuse) vs += "  vColor = aColor.bgra;\n";
   // Per-stage texcoords: camera-space texgen, or the selected vertex uv set,
   // each optionally run through the stage texture matrix.
@@ -293,7 +303,8 @@ uint64_t hash_key(const Key& k) {
   auto put = [&](uint64_t v) { h ^= v + 0x9E37u; h *= 0x100000001b3ull; };
   put(k.fvf);
   put(k.alphaFunc);
-  put((k.lit ? 1u : 0u) | (k.fog ? 2u : 0u));
+  put((k.lit ? 1u : 0u) | (k.fog ? 2u : 0u)
+      | (k.diffFromVertex ? 4u : 0u) | (k.ambFromVertex ? 8u : 0u) | (k.emisFromVertex ? 16u : 0u));
   for (int s = 0; s < 2; s++) {
     const Stage& st = k.stage[s];
     put(st.colorOp); put(st.colorArg1); put(st.colorArg2);

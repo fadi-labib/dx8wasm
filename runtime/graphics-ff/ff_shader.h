@@ -35,6 +35,9 @@ struct Key {
   uint32_t fvf = 0;
   uint32_t alphaFunc = 0;
   bool lit = false, fog = false;
+  // Fixed-function material color sources: when set, the lit path reads that
+  // component from the vertex diffuse (D3DMCS_COLOR1) instead of the material uniform.
+  bool diffFromVertex = false, ambFromVertex = false, emisFromVertex = false;
   Stage stage[2];
 };
 
