@@ -269,10 +269,12 @@ struct Texture8 : IDirect3DTexture8 {
       texfmt::to_bgra(L.px.data(), L.w, L.h, fmt, rgba.data());
       glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
     }
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // Default to bilinear + wrap (the retail game samples smooth, not blocky).
+    // Real per-stage filter/address is applied at bind time (apply_sampler).
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
   }
   HRESULT AddDirtyRect(const RECT*) override { return D3D_OK; }
   ~Texture8() { if (tex && platform::gl_context_alive()) glDeleteTextures(1, &tex); }
@@ -358,6 +360,16 @@ GLenum gl_blend(DWORD b) {
     default: return GL_ONE;
   }
 }
+// D3D sampler filter/address -> GL. POINT/NONE -> nearest, everything else -> linear
+// (bilinear; mipmaps deferred). WRAP is the default; CLAMP/MIRROR honored.
+inline GLenum gl_tex_filter(uint32_t f) { return (f == D3DTEXF_POINT || f == D3DTEXF_NONE) ? GL_NEAREST : GL_LINEAR; }
+inline GLenum gl_tex_wrap(uint32_t a) {
+  switch (a) {
+    case D3DTADDRESS_CLAMP:  return GL_CLAMP_TO_EDGE;
+    case D3DTADDRESS_MIRROR: return GL_MIRRORED_REPEAT;
+    default:                 return GL_REPEAT;   // WRAP
+  }
+}
 
 struct Device8 : IDirect3DDevice8 {
   ULONG refs = 1;
@@ -375,9 +387,15 @@ struct Device8 : IDirect3DDevice8 {
     uint32_t tci;      // low 16 bits of D3DTSS_TEXCOORDINDEX: which vertex uv set feeds the stage
     uint32_t texgen;   // high bits (>>16): 0 none, else a D3DTSS_TCI_* texgen mode
     uint32_t ttff;     // D3DTSS_TEXTURETRANSFORMFLAGS (COUNTn enables the stage matrix)
+    // Sampler state. Default to LINEAR + WRAP (fidelity: the retail game samples
+    // bilinear/trilinear with wrapping; D3D's own POINT/WRAP default would look
+    // blocky). The engine overrides per stage (e.g. terrain sets CLAMP).
+    uint32_t minFilter, magFilter, mipFilter, addressU, addressV;
   } stageState[2] = {
-    { D3DTOP_MODULATE, D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_SELECTARG1, D3DTA_TEXTURE, D3DTA_CURRENT, 0, 0, 0 },
-    { D3DTOP_DISABLE,  D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_DISABLE,    D3DTA_TEXTURE, D3DTA_CURRENT, 1, 0, 0 },
+    { D3DTOP_MODULATE, D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_SELECTARG1, D3DTA_TEXTURE, D3DTA_CURRENT, 0, 0, 0,
+      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP },
+    { D3DTOP_DISABLE,  D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_DISABLE,    D3DTA_TEXTURE, D3DTA_CURRENT, 1, 0, 0,
+      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP },
   };
   float texMat[2][16];                       // D3DTS_TEXTURE0 / D3DTS_TEXTURE0+1 (row-major, uploaded as-is)
   float texFactor[4] = {0, 0, 0, 0};         // D3DRS_TEXTUREFACTOR as RGBA floats
@@ -496,7 +514,12 @@ struct Device8 : IDirect3DDevice8 {
       case D3DTSS_ALPHAARG2: s.alphaArg2 = Value; break;
       case D3DTSS_TEXCOORDINDEX:          s.tci = Value & 0xffff; s.texgen = (Value >> 16) & 0xffff; break;
       case D3DTSS_TEXTURETRANSFORMFLAGS:  s.ttff = Value; break;
-      default: break;   // sampler filters/address handled at texture upload; others ignored
+      case D3DTSS_MINFILTER: s.minFilter = Value; break;
+      case D3DTSS_MAGFILTER: s.magFilter = Value; break;
+      case D3DTSS_MIPFILTER: s.mipFilter = Value; break;
+      case D3DTSS_ADDRESSU:  s.addressU  = Value; break;
+      case D3DTSS_ADDRESSV:  s.addressV  = Value; break;
+      default: break;   // remaining stage states unused
     }
     return D3D_OK;
   }
@@ -611,6 +634,13 @@ struct Device8 : IDirect3DDevice8 {
     warn_once("texgen mode (reflection/normal) unsupported");
     return 0;
   }
+  // Apply a stage's sampler filter/address to the currently-bound GL_TEXTURE_2D.
+  void apply_sampler(const StageState& s) {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gl_tex_filter(s.minFilter));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl_tex_filter(s.magFilter));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_tex_wrap(s.addressU));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_tex_wrap(s.addressV));
+  }
   bool bind_pipeline(GLsizei vstride) {
     g_dx8_draws++;
     glViewport((GLint)viewport.X, (GLint)viewport.Y, (GLsizei)viewport.Width, (GLsizei)viewport.Height);
@@ -679,8 +709,10 @@ struct Device8 : IDirect3DDevice8 {
     else glDisableVertexAttribArray(4);
 
     // Bind both texture stages (stage 0 -> unit 0, stage 1 -> unit 1).
-    if (p->uTex >= 0) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture ? texture->tex : 0); glUniform1i(p->uTex, 0); }
-    if (p->uTex1 >= 0) { glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, texture1 ? texture1->tex : 0); glUniform1i(p->uTex1, 1); }
+    if (p->uTex >= 0) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture ? texture->tex : 0); glUniform1i(p->uTex, 0);
+      if (texture) apply_sampler(stageState[0]); }
+    if (p->uTex1 >= 0) { glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, texture1 ? texture1->tex : 0); glUniform1i(p->uTex1, 1);
+      if (texture1) apply_sampler(stageState[1]); }
 
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
     if (rhw) glUniform2f(p->uViewport, vpW, vpH);
