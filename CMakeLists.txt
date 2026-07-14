@@ -107,6 +107,12 @@ target_link_libraries(light_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(light_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(light_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(matsource_smoke runtime/test/matsource_smoke.cpp)
+target_include_directories(matsource_smoke PRIVATE runtime runtime/d3d8)
+target_link_libraries(matsource_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(matsource_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(matsource_smoke PROPERTIES SUFFIX ".js")
+
 add_executable(multilight_smoke runtime/test/multilight_smoke.cpp)
 target_include_directories(multilight_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(multilight_smoke PRIVATE dx8_d3d8webgl)
