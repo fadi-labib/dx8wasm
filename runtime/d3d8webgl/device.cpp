@@ -303,6 +303,16 @@ struct Texture8 : IDirect3DTexture8 {
     // each level via D3DXLoadSurfaceFromSurface -> UnlockRect -> here). MAX_LEVEL is
     // pinned to what's really present so a mipmap MIN filter stays texture-complete.
     if ((int)l > maxLevel) maxLevel = (int)l;
+    // The engine frequently declares a mip chain (e.g. the A1R5G5B5 terrain atlas,
+    // MIP_LEVELS_3) but only fills level 0. Sampling the never-uploaded levels 1+ at
+    // minification (cliffs / grazing angles) reads uninitialized GPU storage -> the
+    // cyan/green/black tile garbage. Mirror the fork's d3d8webgl: for a multi-level
+    // uncompressed texture, GPU-generate the whole chain from the base level. If the
+    // engine later uploads real filtered levels they simply overwrite these.
+    if (!dxt::is_dxt(fmt) && levels.size() > 1 && l == 0) {
+      glGenerateMipmap(GL_TEXTURE_2D);
+      maxLevel = (int)levels.size() - 1;
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, maxLevel);
     // Default to bilinear + wrap (the retail game samples smooth, not blocky).
     // Real per-stage filter/address is applied at bind time (apply_sampler).
