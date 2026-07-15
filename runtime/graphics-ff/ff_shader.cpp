@@ -81,10 +81,10 @@ std::string combiner_op(uint32_t op, const std::string& a1, const std::string& a
   }
 }
 
-// Assemble the GLSL from the full key. D3DCOLOR arrives as [B,G,R,A] bytes (both
-// diffuse attribute and A8R8G8B8 texel), so every color source is read back with
-// a .bgra swizzle to recover RGBA. uTFactor is uploaded already RGBA-ordered, so
-// it needs no swizzle. Matrices are D3D row-major uploaded as-is (GL reads the
+// Assemble the GLSL from the full key. The vertex DIFFUSE attribute arrives as D3DCOLOR
+// [B,G,R,A] bytes, so it's read back with a .bgra swizzle. Textures are converted to RGBA
+// at upload (matching Leondore's d3d8webgl), so texels are sampled plain. uTFactor is
+// uploaded already RGBA-ordered. Matrices are D3D row-major uploaded as-is (GL reads the
 // transpose), hence proj*view*world (and texMat * uv) — correct for D3D.
 Program build(const Key& k) {
   const uint32_t fvf = k.fvf;
@@ -181,7 +181,10 @@ Program build(const Key& k) {
     "    float nl = dot(N, hitDir);\n"
     "    dsum += uLightDiffuse[i] * (clamp(nl, 0.0, 1.0) * atten);\n"
     "    asum += uLightAmbient[i] * atten;\n"
-    "    if (uSpecularEnable != 0 && nl > 0.0) {\n"       // Blinn half-vector, infinite viewer V=+Z
+    // Gate on power > 0: the engine enables SPECULARENABLE with material Power==0, where
+    // pow(x,0)==1 would add full specular at every lit vertex and blow geometry out to
+    // white (modulated into the texture). Leondore's d3d8webgl omits vertex specular here.
+    "    if (uSpecularEnable != 0 && uMatPower > 0.0 && nl > 0.0) {\n"  // Blinn half-vector, infinite viewer V=+Z
     "      vec3 H = normalize(hitDir + vec3(0.0, 0.0, 1.0));\n"
     "      ssum += uLightSpecular[i] * (pow(max(dot(N, H), 0.0), uMatPower) * atten);\n"
     "    }\n"
@@ -242,7 +245,7 @@ Program build(const Key& k) {
     const std::string sampler = s == 0 ? "uTex" : "uTex1";
     const std::string texv = "tex" + std::to_string(s);
     if (st.hasTex)
-      fs += "  vec4 " + texv + " = texture(" + sampler + ", vUV" + std::to_string(s) + ").bgra;\n";
+      fs += "  vec4 " + texv + " = texture(" + sampler + ", vUV" + std::to_string(s) + ");\n";
     const std::string ta = texv + ".a";
     std::string colorExpr = combiner_op(st.colorOp,
         combiner_arg(st.colorArg1, texv), combiner_arg(st.colorArg2, texv), ta);

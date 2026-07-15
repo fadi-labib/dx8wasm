@@ -94,9 +94,9 @@ struct IndexBuffer8 : IDirect3DIndexBuffer8 {
 struct Surface8;  // fwd: texture mip levels are handed out as surfaces
 
 // DXT/S3TC block decompression (Generals' terrain/unit textures are DXT1/3/5).
-// Decoded to the same [B,G,R,A] byte order the RGBA path uses, so the shader's
-// .bgra swizzle recovers the correct color. CPU decode keeps it portable (no
-// reliance on the WEBGL_compressed_texture_s3tc extension).
+// Decoded to [R,G,B,A] byte order (uploaded as GL_RGBA, sampled plain — matching
+// Leondore's d3d8webgl, which converts all textures to RGBA at upload). CPU decode
+// keeps it portable (no reliance on the WEBGL_compressed_texture_s3tc extension).
 namespace dxt {
 inline bool is_dxt(D3DFORMAT f) { return f == D3DFMT_DXT1 || f == D3DFMT_DXT3 || f == D3DFMT_DXT5; }
 inline UINT block_bytes(D3DFORMAT f) { return f == D3DFMT_DXT1 ? 8u : 16u; }
@@ -120,7 +120,7 @@ inline void color_block(const BYTE* b, BYTE* dst, UINT texW, UINT texH, UINT bx,
     int i = (idx >> (2*(py*4+px))) & 3;
     int a = alpha16 ? alpha16[py*4+px] : (punch && i == 3 ? 0 : 255);
     BYTE* d = dst + ((size_t)y*texW + x)*4;
-    d[0] = (BYTE)bl[i]; d[1] = (BYTE)g[i]; d[2] = (BYTE)r[i]; d[3] = (BYTE)a;   // B,G,R,A
+    d[0] = (BYTE)r[i]; d[1] = (BYTE)g[i]; d[2] = (BYTE)bl[i]; d[3] = (BYTE)a;   // R,G,B,A
   }
 }
 inline void dxt5_alpha(const BYTE* b, BYTE* out16) {
@@ -161,9 +161,6 @@ inline UINT bpp(D3DFORMAT f) {
     default: return 4;   // unknown: treat as 32-bit (verbatim), matches old behavior
   }
 }
-// True for formats uploaded verbatim as GL_RGBA (already [B,G,R,A] in memory).
-inline bool is_bgra32(D3DFORMAT f) { return f == D3DFMT_A8R8G8B8 || f == D3DFMT_X8R8G8B8; }
-// Formats to_bgra() knows how to expand (bpp() otherwise defaults unknowns to 4).
 inline bool supported(D3DFORMAT f) {
   switch (f) {
     case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_R8G8B8:
@@ -173,36 +170,65 @@ inline bool supported(D3DFORMAT f) {
     default: return false;
   }
 }
-inline BYTE e5(uint32_t v) { return (BYTE)((v * 255 + 15) / 31); }
-inline BYTE e6(uint32_t v) { return (BYTE)((v * 255 + 31) / 63); }
-inline BYTE e4(uint32_t v) { return (BYTE)(v * 17); }
-// Expand a tightly-packed source image (w*h*bpp) to dst (w*h*4) as [B,G,R,A].
-inline void to_bgra(const BYTE* src, UINT w, UINT h, D3DFORMAT f, BYTE* dst) {
+// One level prepared for glTexImage2D, matching Leondore's d3d8webgl prepareLevelUpload:
+// 32-bit is converted BGRA->RGBA; 16-bit uses the native GL packed type (no CPU expand);
+// L8/A8/A8L8 use the GL luminance/alpha formats. `conv` holds any reordered bytes.
+struct Upload { GLenum internalFormat, format, type; const BYTE* pixels; std::vector<BYTE> conv; };
+inline bool prepare(D3DFORMAT f, UINT w, UINT h, const BYTE* src, Upload& u) {
   const size_t n = (size_t)w * h;
-  const UINT bp = bpp(f);
-  for (size_t i = 0; i < n; ++i) {
-    BYTE b = 0, g = 0, r = 0, a = 255;
-    const BYTE* s = src + i * bp;
-    if (bp == 2) {
-      uint16_t v = (uint16_t)(s[0] | (s[1] << 8));
-      switch (f) {
-        case D3DFMT_R5G6B5:   r = e5((v>>11)&0x1f); g = e6((v>>5)&0x3f); b = e5(v&0x1f); break;
-        case D3DFMT_X1R5G5B5: r = e5((v>>10)&0x1f); g = e5((v>>5)&0x1f); b = e5(v&0x1f); break;
-        case D3DFMT_A1R5G5B5: a = (v&0x8000)?255:0; r = e5((v>>10)&0x1f); g = e5((v>>5)&0x1f); b = e5(v&0x1f); break;
-        case D3DFMT_A4R4G4B4: a = e4((v>>12)&0xf); r = e4((v>>8)&0xf); g = e4((v>>4)&0xf); b = e4(v&0xf); break;
-        case D3DFMT_X4R4G4B4: r = e4((v>>8)&0xf); g = e4((v>>4)&0xf); b = e4(v&0xf); break;
-        case D3DFMT_A8L8:     a = s[1]; r = g = b = s[0]; break;
-        default: break;
+  switch (f) {
+    case D3DFMT_A8R8G8B8:
+    case D3DFMT_X8R8G8B8: {                    // BGRA bytes -> RGBA; X8 forces opaque alpha
+      const bool opaque = (f == D3DFMT_X8R8G8B8);
+      u.conv.resize(n * 4);
+      for (size_t i = 0; i < n; i++) {
+        u.conv[i*4+0] = src[i*4+2]; u.conv[i*4+1] = src[i*4+1];
+        u.conv[i*4+2] = src[i*4+0]; u.conv[i*4+3] = opaque ? 255 : src[i*4+3];
       }
-    } else if (bp == 3) {           // R8G8B8: memory order B,G,R
-      b = s[0]; g = s[1]; r = s[2];
-    } else if (bp == 1) {
-      if (f == D3DFMT_A8) { a = s[0]; r = g = b = 255; }  // alpha-only, color white
-      else                { r = g = b = s[0]; }           // L8: luminance
-    } else {                        // 4 bpp non-BGRA (shouldn't reach; verbatim path handles A8R8G8B8/X8R8G8B8)
-      b = s[0]; g = s[1]; r = s[2]; a = s[3];
+      u.internalFormat = GL_RGBA; u.format = GL_RGBA; u.type = GL_UNSIGNED_BYTE; u.pixels = u.conv.data();
+      return true;
     }
-    BYTE* d = dst + i * 4; d[0] = b; d[1] = g; d[2] = r; d[3] = a;
+    case D3DFMT_R8G8B8: {                       // 24-bit BGR -> RGBA
+      u.conv.resize(n * 4);
+      for (size_t i = 0; i < n; i++) {
+        u.conv[i*4+0] = src[i*3+2]; u.conv[i*4+1] = src[i*3+1];
+        u.conv[i*4+2] = src[i*3+0]; u.conv[i*4+3] = 255;
+      }
+      u.internalFormat = GL_RGBA; u.format = GL_RGBA; u.type = GL_UNSIGNED_BYTE; u.pixels = u.conv.data();
+      return true;
+    }
+    case D3DFMT_R5G6B5:                          // native 5_6_5 (RGB order already)
+      u.internalFormat = GL_RGB565; u.format = GL_RGB; u.type = GL_UNSIGNED_SHORT_5_6_5; u.pixels = src;
+      return true;
+    case D3DFMT_A4R4G4B4:
+    case D3DFMT_X4R4G4B4: {                       // ARGB4444 -> RGBA4444
+      const bool opaque = (f == D3DFMT_X4R4G4B4);
+      u.conv.resize(n * 2);
+      const uint16_t* s = (const uint16_t*)src; uint16_t* d = (uint16_t*)u.conv.data();
+      for (size_t i = 0; i < n; i++) { uint16_t v = s[i];
+        uint16_t a = opaque ? 0xF : ((v>>12)&0xF), r = (v>>8)&0xF, g = (v>>4)&0xF, b = v&0xF;
+        d[i] = (uint16_t)((r<<12)|(g<<8)|(b<<4)|a); }
+      u.internalFormat = GL_RGBA4; u.format = GL_RGBA; u.type = GL_UNSIGNED_SHORT_4_4_4_4; u.pixels = u.conv.data();
+      return true;
+    }
+    case D3DFMT_A1R5G5B5:
+    case D3DFMT_X1R5G5B5: {                        // ARGB1555 -> RGBA5551
+      const bool opaque = (f == D3DFMT_X1R5G5B5);
+      u.conv.resize(n * 2);
+      const uint16_t* s = (const uint16_t*)src; uint16_t* d = (uint16_t*)u.conv.data();
+      for (size_t i = 0; i < n; i++) { uint16_t v = s[i];
+        uint16_t a = opaque ? 1 : ((v>>15)&0x1), r = (v>>10)&0x1F, g = (v>>5)&0x1F, b = v&0x1F;
+        d[i] = (uint16_t)((r<<11)|(g<<6)|(b<<1)|a); }
+      u.internalFormat = GL_RGB5_A1; u.format = GL_RGBA; u.type = GL_UNSIGNED_SHORT_5_5_5_1; u.pixels = u.conv.data();
+      return true;
+    }
+    case D3DFMT_L8:
+      u.internalFormat = GL_LUMINANCE; u.format = GL_LUMINANCE; u.type = GL_UNSIGNED_BYTE; u.pixels = src; return true;
+    case D3DFMT_A8:
+      u.internalFormat = GL_ALPHA; u.format = GL_ALPHA; u.type = GL_UNSIGNED_BYTE; u.pixels = src; return true;
+    case D3DFMT_A8L8:
+      u.internalFormat = GL_LUMINANCE_ALPHA; u.format = GL_LUMINANCE_ALPHA; u.type = GL_UNSIGNED_BYTE; u.pixels = src; return true;
+    default: return false;
   }
 }
 } // namespace texfmt
@@ -260,15 +286,18 @@ struct Texture8 : IDirect3DTexture8 {
     glBindTexture(GL_TEXTURE_2D, tex);
     const Level& L = levels[l];
     if (dxt::is_dxt(fmt)) {
-      std::vector<BYTE> rgba((size_t)L.w * L.h * 4);   // CPU-decompress DXT -> RGBA
+      std::vector<BYTE> rgba((size_t)L.w * L.h * 4);   // CPU-decompress DXT -> RGBA (portable; no S3TC ext)
       dxt::decode(L.px.data(), L.w, L.h, fmt, rgba.data());
       glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-    } else if (texfmt::is_bgra32(fmt)) {
-      glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, L.px.data());
     } else {
-      std::vector<BYTE> rgba((size_t)L.w * L.h * 4);   // expand 16/24/8-bit -> [B,G,R,A]
-      texfmt::to_bgra(L.px.data(), L.w, L.h, fmt, rgba.data());
-      glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+      texfmt::Upload u;
+      if (texfmt::prepare(fmt, L.w, L.h, L.px.data(), u))
+        glTexImage2D(GL_TEXTURE_2D, (GLint)l, u.internalFormat, (GLsizei)L.w, (GLsizei)L.h, 0, u.format, u.type, u.pixels);
+      else {                                            // unknown format -> magenta (visible, not crashy)
+        std::vector<BYTE> mag((size_t)L.w * L.h * 4);
+        for (size_t i = 0; i < mag.size(); i += 4) { mag[i]=255; mag[i+1]=0; mag[i+2]=255; mag[i+3]=255; }
+        glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, mag.data());
+      }
     }
     // Track the mip chain the engine actually uploads (D3DXFilterTexture downscales
     // each level via D3DXLoadSurfaceFromSurface -> UnlockRect -> here). MAX_LEVEL is
@@ -432,6 +461,14 @@ struct Device8 : IDirect3DDevice8 {
   D3DMATERIAL8 material{ {1, 1, 1, 1}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}, 0 };
   bool fogEnable = false;
   float fogColor[3] = {0, 0, 0}, fogStart = 0.0f, fogEnd = 1.0f;
+  // Color write mask (D3DRS_COLORWRITEENABLE). Default = write all (0xF). Zero is a real
+  // value: stencil-shadow volumes render color-write-off; mapping 0 -> "write all" painted
+  // every shadow volume as a solid black silhouette over the scene.
+  DWORD colorWrite = 0xF;
+  // Stencil state (applied together at draw time, since glStencilFunc/Op take grouped args).
+  bool  stencilEnable = false;
+  DWORD stencilFail = D3DSTENCILOP_KEEP, stencilZFail = D3DSTENCILOP_KEEP, stencilPass = D3DSTENCILOP_KEEP;
+  DWORD stencilFunc = D3DCMP_ALWAYS, stencilRef = 0, stencilMask = 0xFFFFFFFF, stencilWriteMask = 0xFFFFFFFF;
   float vpW, vpH;
   D3DVIEWPORT8 viewport;
   GLuint scratchVB = 0, scratchIB = 0;   // reused for DrawPrimitiveUP (user-pointer) draws
@@ -457,16 +494,19 @@ struct Device8 : IDirect3DDevice8 {
     return r;
   }
 
-  HRESULT Clear(DWORD, const D3DRECT*, DWORD Flags, D3DCOLOR c, float, DWORD) override {
+  HRESULT Clear(DWORD, const D3DRECT*, DWORD Flags, D3DCOLOR c, float Z, DWORD Stencil) override {
     g_dx8_clears++;
     GLbitfield mask = 0;
     if (Flags & D3DCLEAR_TARGET) {
+      // D3D Clear ignores COLORWRITEENABLE; force all channels on so a shadow pass that
+      // left color-write off doesn't mask the clear. The next draw restores the mask.
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
       glClearColor(((c >> 16) & 0xff) / 255.0f, ((c >> 8) & 0xff) / 255.0f,
                    (c & 0xff) / 255.0f, ((c >> 24) & 0xff) / 255.0f);
       mask |= GL_COLOR_BUFFER_BIT;
     }
-    if (Flags & D3DCLEAR_ZBUFFER) { glDepthMask(GL_TRUE); mask |= GL_DEPTH_BUFFER_BIT; }
-    if (Flags & D3DCLEAR_STENCIL) mask |= GL_STENCIL_BUFFER_BIT;
+    if (Flags & D3DCLEAR_ZBUFFER) { glDepthMask(GL_TRUE); glClearDepthf(Z); mask |= GL_DEPTH_BUFFER_BIT; }
+    if (Flags & D3DCLEAR_STENCIL) { glStencilMask(0xFFFFFFFF); glClearStencil((GLint)Stencil); mask |= GL_STENCIL_BUFFER_BIT; }
     glClear(mask);
     if (Flags & D3DCLEAR_ZBUFFER) glDepthMask(zWrite ? GL_TRUE : GL_FALSE);
     return D3D_OK;
@@ -581,6 +621,16 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_TEXTUREFACTOR:   // ARGB -> RGBA floats for the combiner's TFACTOR arg
         texFactor[0] = ((Value >> 16) & 0xff) / 255.0f; texFactor[1] = ((Value >> 8) & 0xff) / 255.0f;
         texFactor[2] = (Value & 0xff) / 255.0f; texFactor[3] = ((Value >> 24) & 0xff) / 255.0f; break;
+      // Color write + stencil: stored, applied together at draw time (apply_raster_masks).
+      case D3DRS_COLORWRITEENABLE: colorWrite = Value; break;
+      case D3DRS_STENCILENABLE:    stencilEnable = Value != 0; break;
+      case D3DRS_STENCILFAIL:      stencilFail = Value; break;
+      case D3DRS_STENCILZFAIL:     stencilZFail = Value; break;
+      case D3DRS_STENCILPASS:      stencilPass = Value; break;
+      case D3DRS_STENCILFUNC:      stencilFunc = Value; break;
+      case D3DRS_STENCILREF:       stencilRef = Value; break;
+      case D3DRS_STENCILMASK:      stencilMask = Value; break;
+      case D3DRS_STENCILWRITEMASK: stencilWriteMask = Value; break;
       default: coverage::unhandled_render_state(State); break;
     }
     return D3D_OK;
@@ -609,6 +659,33 @@ struct Device8 : IDirect3DDevice8 {
   void apply_cull(DWORD mode) {
     if (mode == D3DCULL_NONE) { glDisable(GL_CULL_FACE); return; }
     glEnable(GL_CULL_FACE); glFrontFace(GL_CCW); glCullFace(mode == D3DCULL_CCW ? GL_FRONT : GL_BACK);
+  }
+  static GLenum gl_stencilop(DWORD op) {
+    switch (op) {
+      case D3DSTENCILOP_KEEP:    return GL_KEEP;
+      case D3DSTENCILOP_ZERO:    return GL_ZERO;
+      case D3DSTENCILOP_REPLACE: return GL_REPLACE;
+      case D3DSTENCILOP_INCRSAT: return GL_INCR;
+      case D3DSTENCILOP_DECRSAT: return GL_DECR;
+      case D3DSTENCILOP_INVERT:  return GL_INVERT;
+      case D3DSTENCILOP_INCR:    return GL_INCR_WRAP;
+      case D3DSTENCILOP_DECR:    return GL_DECR_WRAP;
+      default:                   return GL_KEEP;
+    }
+  }
+  // Color-write mask + stencil, applied per-draw from stored state (Leondore's d3d8webgl
+  // model). Deferring to draw time keeps Clear (which must force color-write on) correct.
+  void apply_raster_masks() {
+    glColorMask((colorWrite & 1) != 0, (colorWrite & 2) != 0, (colorWrite & 4) != 0, (colorWrite & 8) != 0);
+    if (stencilEnable) {
+      glEnable(GL_STENCIL_TEST);
+      glStencilFunc(gl_cmpfunc(stencilFunc ? stencilFunc : D3DCMP_ALWAYS), (GLint)stencilRef,
+                    stencilMask ? stencilMask : 0xFFFFFFFF);
+      glStencilOp(gl_stencilop(stencilFail), gl_stencilop(stencilZFail), gl_stencilop(stencilPass));
+      glStencilMask(stencilWriteMask ? stencilWriteMask : 0xFFFFFFFF);
+    } else {
+      glDisable(GL_STENCIL_TEST);
+    }
   }
   void set_light_uniforms(const ff::Program* p) {
     int type[ff::MAX_LIGHTS];
@@ -669,7 +746,14 @@ struct Device8 : IDirect3DDevice8 {
   }
   bool bind_pipeline(GLsizei vstride) {
     g_dx8_draws++;
-    glViewport((GLint)viewport.X, (GLint)viewport.Y, (GLsizei)viewport.Width, (GLsizei)viewport.Height);
+    // D3D viewport Y is measured from the TOP; GL's framebuffer is bottom-up. Flip Y so a
+    // partial viewport (the in-game 3D view sits above the command bar, i.e. height < the
+    // full backbuffer) lands in the correct half instead of the bottom -> otherwise the
+    // scene renders shifted down and mouse picking is offset vertically by the same amount.
+    // Full-screen viewports (Y=0, Height=backbuffer) are unaffected: vpH-0-vpH == 0.
+    glViewport((GLint)viewport.X, (GLint)((int)vpH - (int)viewport.Y - (int)viewport.Height),
+               (GLsizei)viewport.Width, (GLsizei)viewport.Height);
+    apply_raster_masks();   // color-write mask + stencil, from stored render state
     // FVF texcoord count is (fvf>>8)&0xf sets (D3DFVF_TEX1=0x100, TEX2=0x200, ...),
     // NOT a bitmask. The engine's 2D UI uses TEX2 (0x200); a `& D3DFVF_TEX1` test
     // wrongly reads that as untextured. Treat any texcoord set as "has UVs".
