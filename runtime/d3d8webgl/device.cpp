@@ -395,13 +395,19 @@ GLenum gl_blend(DWORD b) {
     default: return GL_ONE;
   }
 }
-// D3D sampler filter/address -> GL. POINT/NONE -> nearest, everything else -> linear.
+// D3D sampler filter/address -> GL. Only explicit POINT -> nearest; everything else
+// (incl. LINEAR/ANISOTROPIC) -> linear. D3DTEXF_NONE (0) is invalid for min/mag in real
+// D3D8 — the runtime rejects it and the effective filter stays LINEAR — so we must NOT
+// treat a NONE min/mag as nearest. (The engine leaves textures at an uninitialized
+// FILTER_TYPE_DEFAULT that resolves to 0/NONE; the shroud relied on that meaning linear,
+// and mapping it to nearest turned its one-texel-per-cell projection into hard squares.)
+// NONE remains meaningful only for the *mip* filter (no mipmapping), handled below.
 // WRAP is the default; CLAMP/MIRROR honored. gl_tex_filter is used for MAG (never
 // mipmapped); MIN goes through gl_min_filter which fuses D3D's separate min+mip knobs
 // into GL's single enum, but only when a real mip chain was uploaded (hasMips).
-inline GLenum gl_tex_filter(uint32_t f) { return (f == D3DTEXF_POINT || f == D3DTEXF_NONE) ? GL_NEAREST : GL_LINEAR; }
+inline GLenum gl_tex_filter(uint32_t f) { return (f == D3DTEXF_POINT) ? GL_NEAREST : GL_LINEAR; }
 inline GLenum gl_min_filter(uint32_t minF, uint32_t mipF, bool hasMips) {
-  const bool linMin = !(minF == D3DTEXF_POINT || minF == D3DTEXF_NONE);
+  const bool linMin = (minF != D3DTEXF_POINT);
   if (!hasMips || mipF == D3DTEXF_NONE) return linMin ? GL_LINEAR : GL_NEAREST;
   const bool linMip = (mipF == D3DTEXF_LINEAR);   // else POINT: nearest mip
   if (linMin) return linMip ? GL_LINEAR_MIPMAP_LINEAR  : GL_LINEAR_MIPMAP_NEAREST;
