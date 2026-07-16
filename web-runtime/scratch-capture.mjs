@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Headless capture of the GeneralsX wasm engine. Spawns the engine's serve-game.mjs,
 // loads it in headless Chromium (SwiftShader), waits, screenshots the canvas + dumps console.
 //   node scratch-capture.mjs                       (menu)
