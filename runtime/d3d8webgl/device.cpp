@@ -435,6 +435,7 @@ struct Device8 : IDirect3DDevice8 {
   ULONG refs = 1;
   VertexBuffer8* stream = nullptr;
   IndexBuffer8* indices = nullptr;
+  UINT baseVertexIndex = 0;   // D3D8 SetIndices base: added to every index at draw time
   UINT stride = 0;
   uint32_t fvf = 0;
   Texture8* texture = nullptr;               // stage 0 texture
@@ -553,10 +554,10 @@ struct Device8 : IDirect3DDevice8 {
     if (n) n->AddRef(); if (stream) stream->Release();
     stream = n; stride = Stride; return D3D_OK;
   }
-  HRESULT SetIndices(IDirect3DIndexBuffer8* ib, UINT) override {   // ponytail: BaseVertexIndex assumed 0
+  HRESULT SetIndices(IDirect3DIndexBuffer8* ib, UINT BaseVertexIndex) override {
     auto* n = static_cast<IndexBuffer8*>(ib);
     if (n) n->AddRef(); if (indices) indices->Release();
-    indices = n; return D3D_OK;
+    indices = n; baseVertexIndex = BaseVertexIndex; return D3D_OK;
   }
   HRESULT SetVertexShader(DWORD Handle) override { fvf = Handle; return D3D_OK; }
   HRESULT SetTexture(DWORD Stage, IDirect3DBaseTexture8* t) override {
@@ -760,7 +761,11 @@ struct Device8 : IDirect3DDevice8 {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_tex_wrap(s.addressU));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_tex_wrap(s.addressV));
   }
-  bool bind_pipeline(GLsizei vstride) {
+  // vbase: byte offset added to every vertex-attribute pointer. Used to honor D3D8's
+  // SetIndices BaseVertexIndex on GLES3 (no glDrawElementsBaseVertex) — the dynamic
+  // vertex-buffer ring (render2d/2D UI, dynamesh, particles) writes each batch at a
+  // running offset and relies on BaseVertexIndex to point the draw at it.
+  bool bind_pipeline(GLsizei vstride, GLintptr vbase = 0) {
     g_dx8_draws++;
     // D3D viewport Y is measured from the TOP; GL's framebuffer is bottom-up. Flip Y so a
     // partial viewport (the in-game 3D view sits above the command bar, i.e. height < the
@@ -828,17 +833,17 @@ struct Device8 : IDirect3DDevice8 {
     // then the texcoord sets (2 floats each). Locations: 0 pos, 1 diffuse,
     // 2 uv-set0, 3 normal, 4 uv-set1 (matches the shader's `layout(location=)`).
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, rhw ? 4 : 3, GL_FLOAT, GL_FALSE, vstride, (void*)0);
+    glVertexAttribPointer(0, rhw ? 4 : 3, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)vbase);
     GLuint off = rhw ? 16 : 12;
-    if (fvf & D3DFVF_NORMAL) { glEnableVertexAttribArray(3); glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)off); off += 12; }
+    if (fvf & D3DFVF_NORMAL) { glEnableVertexAttribArray(3); glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)(vbase + off)); off += 12; }
     else glDisableVertexAttribArray(3);
-    if (fvf & D3DFVF_DIFFUSE) { glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, vstride, (void*)(uintptr_t)off); off += 4; }
+    if (fvf & D3DFVF_DIFFUSE) { glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, vstride, (void*)(uintptr_t)(vbase + off)); off += 4; }
     else glDisableVertexAttribArray(1);
     if (fvf & D3DFVF_SPECULAR) off += 4;         // present in some passes; skipped, keeps uv offsets right
     const GLuint uvBase = off;
-    if (texcoords > 0) { glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)uvBase); }
+    if (texcoords > 0) { glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)(vbase + uvBase)); }
     else glDisableVertexAttribArray(2);
-    if (texcoords > 1) { glEnableVertexAttribArray(4); glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)(uvBase + 2 * sizeof(float))); }
+    if (texcoords > 1) { glEnableVertexAttribArray(4); glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, vstride, (void*)(uintptr_t)(vbase + uvBase + 2 * sizeof(float))); }
     else glDisableVertexAttribArray(4);
 
     // Bind both texture stages (stage 0 -> unit 0, stage 1 -> unit 1).
@@ -857,7 +862,9 @@ struct Device8 : IDirect3DDevice8 {
     GLenum mode; GLsizei icount;
     if (!stream || !indices || !prim_info(Type, PrimitiveCount, mode, icount)) return D3DERR_INVALIDCALL;
     glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
-    if (!bind_pipeline((GLsizei)stride)) return D3DERR_INVALIDCALL;
+    // Honor D3D8 SetIndices BaseVertexIndex by offsetting the attribute pointers
+    // (GLES3 has no glDrawElementsBaseVertex). Indices stay 0-based as the engine wrote them.
+    if (!bind_pipeline((GLsizei)stride, (GLintptr)baseVertexIndex * stride)) return D3DERR_INVALIDCALL;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices->b.glbuf);
     glDrawElements(mode, icount, GL_UNSIGNED_SHORT, (void*)(uintptr_t)(StartIndex * sizeof(uint16_t)));
     return D3D_OK;
