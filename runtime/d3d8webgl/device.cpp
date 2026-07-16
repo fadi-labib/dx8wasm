@@ -924,15 +924,20 @@ struct Device8 : IDirect3DDevice8 {
                     IDirect3DSurface8* dst, const POINT* dstPoints) override {
     auto* s = static_cast<Surface8*>(src); auto* d = static_cast<Surface8*>(dst);
     if (!s || !d) return D3DERR_INVALIDCALL;
+    // Bytes per pixel comes from the surface format, NOT a hardcoded 4. The shroud
+    // (fog of war) copies an R5G6B5 (2 bpp) src into its R5G6B5 dst texture every
+    // frame; using 4 here doubled every stride/offset and filled the dst with
+    // misaligned garbage that projected onto terrain as cyan/green/black tiles.
+    const UINT bpp = texfmt::bpp(s->fmt);
     UINT count = n ? n : 1;
     for (UINT i = 0; i < count; ++i) {
       RECT r = srcRects ? srcRects[i] : RECT{0, 0, (LONG)s->w, (LONG)s->h};
       POINT p = dstPoints ? dstPoints[i] : POINT{r.left, r.top};
       UINT rw = (UINT)(r.right - r.left), rh = (UINT)(r.bottom - r.top);
       for (UINT y = 0; y < rh; ++y) {
-        const BYTE* sp = s->base() + (size_t)(r.top + y) * (s->w * 4) + (size_t)r.left * 4;
-        BYTE* dp = d->base() + (size_t)(p.y + y) * (d->w * 4) + (size_t)p.x * 4;
-        std::memcpy(dp, sp, (size_t)rw * 4);
+        const BYTE* sp = s->base() + (size_t)(r.top + y) * (s->w * bpp) + (size_t)r.left * bpp;
+        BYTE* dp = d->base() + (size_t)(p.y + y) * (d->w * bpp) + (size_t)p.x * bpp;
+        std::memcpy(dp, sp, (size_t)rw * bpp);
       }
     }
     if (d->parent) d->parent->upload_level(d->level);
