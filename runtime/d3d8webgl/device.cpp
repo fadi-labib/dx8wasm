@@ -3,6 +3,7 @@
 // dispatches correctly); the supported subset does real work, the rest are honest
 // stubs (log-once / coverage / sensible defaults) pending Phase C.
 #include "d3d8/d3d8.h"
+#include "caps_fill.h"   // shared fill_caps() — device caps must match IDirect3D8's
 #include "platform/platform.h"
 #include "graphics-ff/ff_shader.h"
 #include "coverage/coverage.h"
@@ -877,14 +878,11 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT GetDirect3D(IDirect3D8** o) override { if (o) *o = nullptr; warn_once("GetDirect3D"); return D3DERR_INVALIDCALL; }
   HRESULT GetDeviceCaps(D3DCAPS8* c) override {
     if (!c) return D3DERR_INVALIDCALL;
-    std::memset(c, 0, sizeof *c);
-    c->DeviceType = D3DDEVTYPE_HAL;
-    c->MaxTextureWidth = c->MaxTextureHeight = 4096; c->MaxTextureRepeat = 8192;
-    c->MaxTextureBlendStages = 2; c->MaxSimultaneousTextures = 2;
-    c->MaxActiveLights = ff::MAX_LIGHTS; c->MaxVertexBlendMatrices = 0;
-    c->MaxPrimitiveCount = 0xffff; c->MaxVertexIndex = 0xffff; c->MaxStreams = 1;
-    c->VertexShaderVersion = 0; c->PixelShaderVersion = 0;   // fixed-function only
-    c->TextureOpCaps = 0xffffffff; c->TextureCaps = 0;
+    // Report the SAME full cap set as IDirect3D8::GetDeviceCaps (shared caps_fill.h).
+    // The engine's runtime filter/feature selection (DX8Caps::Init_Caps) queries THIS
+    // device object; the old near-empty caps here (TextureFilterCaps=0) made it think
+    // the GPU had no bilinear filtering, downgrading every texture to nearest -> blocky.
+    fill_caps(c);
     return D3D_OK;
   }
   HRESULT GetDisplayMode(D3DDISPLAYMODE* m) override {
