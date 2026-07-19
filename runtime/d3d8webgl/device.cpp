@@ -283,6 +283,19 @@ struct Texture8 : IDirect3DTexture8 {
   // state is applied elsewhere.
   void upload_level(UINT l) {
     if (l >= levels.size()) return;
+    // Reference-aligned mip handling (Leondore d3d8webgl): for a MULTI-LEVEL texture the
+    // BASE level is authoritative -- upload level 0 and GPU-generate the whole chain,
+    // and IGNORE the engine's uploads to levels 1+. This removes two mip-garbage sources
+    // that show up as a shared shimmer/tiling pattern on MINIFIED alpha surfaces (trees,
+    // shoreline, water, projected light pools):
+    //   (a) the engine declares a chain (e.g. MIP_LEVELS_3) but leaves upper levels empty
+    //       -> minification samples transparent-black/garbage from the unfilled levels;
+    //   (b) a later empty upper-level UnlockRect clobbering the freshly generated mips.
+    // Applies to DXT too: we CPU-decode DXT to RGBA, so glGenerateMipmap is valid and the
+    // never-filled DXT upper levels (previously uploaded as black -> tree/foliage moire)
+    // can no longer leak. Single-level textures are unchanged (no mip chain generated).
+    const bool multiLevel = levels.size() > 1;
+    if (multiLevel && l != 0) return;                 // base level drives the whole chain
     if (!tex) glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     const Level& L = levels[l];
@@ -300,19 +313,11 @@ struct Texture8 : IDirect3DTexture8 {
         glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA, (GLsizei)L.w, (GLsizei)L.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, mag.data());
       }
     }
-    // Track the mip chain the engine actually uploads (D3DXFilterTexture downscales
-    // each level via D3DXLoadSurfaceFromSurface -> UnlockRect -> here). MAX_LEVEL is
-    // pinned to what's really present so a mipmap MIN filter stays texture-complete.
-    if ((int)l > maxLevel) maxLevel = (int)l;
-    // The engine frequently declares a mip chain (e.g. the A1R5G5B5 terrain atlas,
-    // MIP_LEVELS_3) but only fills level 0. Sampling the never-uploaded levels 1+ at
-    // minification (cliffs / grazing angles) reads uninitialized GPU storage -> the
-    // cyan/green/black tile garbage. Mirror the fork's d3d8webgl: for a multi-level
-    // uncompressed texture, GPU-generate the whole chain from the base level. If the
-    // engine later uploads real filtered levels they simply overwrite these.
-    if (!dxt::is_dxt(fmt) && levels.size() > 1 && l == 0) {
-      glGenerateMipmap(GL_TEXTURE_2D);
+    if (multiLevel) {
+      glGenerateMipmap(GL_TEXTURE_2D);                 // l==0 here; regenerate the full chain from the base
       maxLevel = (int)levels.size() - 1;
+    } else if ((int)l > maxLevel) {
+      maxLevel = (int)l;
     }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, maxLevel);
     // Default to bilinear + wrap (the retail game samples smooth, not blocky).
