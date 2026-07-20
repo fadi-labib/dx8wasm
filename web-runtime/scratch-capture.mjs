@@ -26,7 +26,8 @@ for (const opts of [{}, { channel: 'chrome' }, { executablePath: '/usr/bin/googl
   try { browser = await chromium.launch({ headless: true, args, ...opts }); break; } catch { /* next */ }
 }
 if (!browser) { console.error('could not launch Chromium'); done(); process.exit(1); }
-const ctx = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+const VW = Number(process.env.VW || 1024), VH = Number(process.env.VH || 768);
+const ctx = await browser.newContext({ viewport: { width: VW, height: VH } });
 const page = await ctx.newPage();
 const logs = [];
 page.on('console', m => logs.push(`[${m.type()}] ${m.text()}`));
