@@ -10,6 +10,7 @@
 #include <GLES3/gl3.h>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <vector>
 
@@ -431,7 +432,13 @@ inline GLenum gl_min_filter(uint32_t minF, uint32_t mipF, bool hasMips) {
 }
 inline GLenum gl_tex_wrap(uint32_t a) {
   switch (a) {
-    case D3DTADDRESS_CLAMP:  return GL_CLAMP_TO_EDGE;
+    case D3DTADDRESS_CLAMP:
+    // D3DTADDRESS_BORDER: GLES3 has no GL_CLAMP_TO_BORDER, so clamp to the edge texel —
+    // matching the reference d3d8webgl port. Without this case, BORDER fell through to
+    // GL_REPEAT, which tiles a single sprite and can wrap the opposite edge in at the quad
+    // boundary. (Correctness fix for BORDER-addressed content; the game's smoke/particle
+    // billboards observed so far use WRAP/CLAMP, not BORDER.)
+    case D3DTADDRESS_BORDER: return GL_CLAMP_TO_EDGE;
     case D3DTADDRESS_MIRROR: return GL_MIRRORED_REPEAT;
     default:                 return GL_REPEAT;   // WRAP
   }
