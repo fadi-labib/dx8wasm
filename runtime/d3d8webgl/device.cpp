@@ -474,6 +474,7 @@ struct Device8 : IDirect3DDevice8 {
   float texMat[2][16];                       // D3DTS_TEXTURE0 / D3DTS_TEXTURE0+1 (row-major, uploaded as-is)
   float texFactor[4] = {0, 0, 0, 0};         // D3DRS_TEXTUREFACTOR as RGBA floats
   GLenum srcBlend = GL_ONE, dstBlend = GL_ZERO;
+  bool alphaBlendEnable = false;   // D3DRS_ALPHABLENDENABLE — tracked so the draw path re-asserts it
   bool alphaTestEnable = false, zWrite = true, zTest = true;   // zTest = engine's D3DRS_ZENABLE intent
   uint32_t alphaFunc = D3DCMP_ALWAYS;
   DWORD alphaRef = 0;
@@ -624,7 +625,7 @@ struct Device8 : IDirect3DDevice8 {
         if (Value) { glPolygonOffset(-(float)Value, -(float)Value); glEnable(GL_POLYGON_OFFSET_FILL); }
         else glDisable(GL_POLYGON_OFFSET_FILL); break;
       case D3DRS_SHADEMODE:        break;   // GOURAUD (our default); FLAT unsupported
-      case D3DRS_ALPHABLENDENABLE: Value ? glEnable(GL_BLEND) : glDisable(GL_BLEND); break;
+      case D3DRS_ALPHABLENDENABLE: alphaBlendEnable = Value != 0; alphaBlendEnable ? glEnable(GL_BLEND) : glDisable(GL_BLEND); break;
       case D3DRS_SRCBLEND:         srcBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
       case D3DRS_DESTBLEND:        dstBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
       case D3DRS_CULLMODE:         apply_cull(Value); break;
@@ -800,6 +801,14 @@ struct Device8 : IDirect3DDevice8 {
     // D3DRS_ZENABLE intent for 3D draws.
     if (rhw) glDisable(GL_DEPTH_TEST);
     else     zTest ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
+    // Re-assert blend + depth-write on every draw, like the reference d3d8webgl port's
+    // per-draw applyFixedState. Applying these only eagerly in SetRenderState lets a stale
+    // GL blend/depth-mask from a prior draw leak in — e.g. 3D smoke particles ending up
+    // opaque with depth-write enabled, so each billboard renders as a hard SQUARE instead
+    // of soft alpha (2D UI, which sets its own state right before drawing, was unaffected).
+    alphaBlendEnable ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
+    glBlendFunc(srcBlend, dstBlend);
+    glDepthMask(zWrite ? GL_TRUE : GL_FALSE);
 
     // Build the full program key from the per-stage state. A stage with no texture
     // collapses (stage 0 -> select the diffuse/current color, stage 1 -> disable)
