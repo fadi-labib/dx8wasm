@@ -20,7 +20,7 @@ import { createReadStream, statSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { chromium } from 'playwright';
 
-const DIST = '/home/fla/projects/personal/generals-dx8wasm/dist/GeneralsMD';
+const DIST = process.env.DIST || '/home/fla/projects/personal/generals-dx8wasm/dist/GeneralsMD';
 const PORT = Number(process.env.PORT || 8137);
 const MARKER = '.gx-complete';
 
