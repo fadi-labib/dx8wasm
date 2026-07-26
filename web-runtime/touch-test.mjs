@@ -7,10 +7,14 @@
 // translation: real multi-touch sequences go in via CDP, and spies on the canvas record what
 // comes out.
 //
-// What this canNOT tell you is whether the result FEELS right on a phone -- whether 450ms is
-// the right hold, whether pinch is too sensitive, whether arrow-key scrolling is smooth
-// enough. That needs a human with a device. This only proves the plumbing is correct, so that
-// testing starts from "does it feel good" rather than "does anything happen at all".
+// The gesture set is a port of the device-tuned iOS/Android translator (see that fork's
+// docs/port/TOUCH_CONTROLS.md). Note the game's stock scheme is LEFT-button-centric: left
+// selects AND commands, right deselects. So a long press is deselect, not the primary order.
+//
+// What this canNOT tell you is whether the result FEELS right on a phone -- whether 600ms is
+// the right hold, whether pinch is too sensitive, whether the camera tracks the fingers well.
+// That needs a human with a device. This proves the plumbing, so testing starts from "does it
+// feel good" rather than "does anything happen at all".
 //
 // Usage: node web-runtime/touch-test.mjs
 import { spawn } from 'node:child_process';
@@ -92,10 +96,10 @@ await wait(120);
 }
 
 // ---- 2. long press -> right click ----
-console.log('\n2. hold ~450ms -> RIGHT click (the primary RTS order)');
+console.log('\n2. hold 600ms -> RIGHT click (deselect)');
 await drain();
 await touch('touchStart', [{ x: 420, y: 350 }]);
-await wait(650);
+await wait(800);
 await touch('touchEnd', []);
 await wait(150);
 {
@@ -105,10 +109,10 @@ await wait(150);
   check(!!rdown, 'emits a right mousedown', JSON.stringify(ev));
   check(!!rup, 'emits a right mouseup');
   check(!!rdown && rdown.x === 420 && rdown.y === 350, 'at the held point');
-  // This is the one that matters: a stray left click after an order would deselect the units
-  // that were just given it.
+  // Left click is the ORDER button in this game, so a long press degrading into a left click
+  // would command the player's units somewhere they never intended.
   check(!ev.some(e => e.tag === 'mousedown' && e.button === 0),
-    'no stray LEFT click on release (would deselect the ordered units)');
+    'no stray LEFT click on release (left = issue order in the stock scheme)');
 }
 
 // ---- 3. drag -> left drag (box select) ----
@@ -149,27 +153,67 @@ await wait(120);
   check(!ev.some(e => e.tag === 'mousedown'), 'a pinch never presses a mouse button');
 }
 
-// ---- 5. two-finger drag -> arrow keys (scroll) ----
-console.log('\n5. two-finger drag -> arrow keys (scroll)');
+// ---- 5. two-finger drag -> right-button drag (camera scroll) ----
+// The engine's native camera scroll is an RMB drag whose speed grows with distance from the
+// press point. Arrow keys would also scroll, but this reuses the engine's own mechanism and
+// gives 1:1 finger tracking.
+console.log('\n5. two-finger drag -> right-button drag (camera scroll)');
 await drain();
 await touch('touchStart', [{ x: 400, y: 350 }, { x: 460, y: 350 }]);
 await wait(60);
-// Move both fingers together (constant separation) so this reads as pan, not pinch.
-for (let i = 1; i <= 5; i++) {
+// Move both fingers together (constant separation) so this locks to pan, not pinch.
+for (let i = 1; i <= 6; i++) {
   await touch('touchMove', [{ x: 400 + i * 25, y: 350 }, { x: 460 + i * 25, y: 350 }]);
   await wait(40);
 }
-await wait(80);
 await touch('touchEnd', []);
 await wait(150);
 {
   const ev = await drain();
-  const downs = ev.filter(e => e.tag === 'keydown').map(e => e.key);
-  const ups = ev.filter(e => e.tag === 'keyup').map(e => e.key);
-  check(downs.includes('ArrowLeft'),
-    'dragging right scrolls left (content follows the fingers)', JSON.stringify(downs));
-  check(ups.includes('ArrowLeft'), 'releases the key when the fingers lift');
-  check(!ev.some(e => e.tag === 'mousedown'), 'a two-finger scroll never presses a mouse button');
+  const rdown = ev.find(e => e.tag === 'mousedown' && e.button === 2);
+  const rmoves = ev.filter(e => e.tag === 'mousemove' && e.buttons === 2);
+  const rup = ev.find(e => e.tag === 'mouseup' && e.button === 2);
+  check(!!rdown, 'presses the RIGHT button to start the camera scroll', JSON.stringify(ev.slice(0, 4)));
+  check(rmoves.length >= 3, `moves with the right button held (${rmoves.length})`);
+  check(!!rup, 'releases the right button when the fingers lift');
+  check(!ev.some(e => e.tag === 'mousedown' && e.button === 0),
+    'a two-finger scroll never presses the LEFT button');
+  // Mode lock: a pan must not also emit zoom. Panning fingers never hold their separation
+  // perfectly, and without the lock that leaks spurious wheel ticks.
+  check(!ev.some(e => e.tag === 'wheel'), 'panning emits no wheel ticks (pan/pinch mode lock)');
+}
+
+// ---- 5b. pinch does not pan ----
+console.log('\n5b. pinch is mode-locked against panning');
+await drain();
+await touch('touchStart', [{ x: 400, y: 350 }, { x: 460, y: 350 }]);
+await wait(60);
+for (let i = 1; i <= 6; i++) {
+  await touch('touchMove', [{ x: 400 - i * 22, y: 350 }, { x: 460 + i * 22, y: 350 }]);
+  await wait(40);
+}
+await touch('touchEnd', []);
+await wait(150);
+{
+  const ev = await drain();
+  check(ev.some(e => e.tag === 'wheel'), 'still zooms');
+  check(!ev.some(e => e.tag === 'mousedown' && e.button === 2),
+    'zooming never starts a camera scroll (pan/pinch mode lock)');
+}
+
+// ---- 5c. a cancelled touch must not click ----
+// An incoming call or the notification shade cancels a touch. Committing the deferred click
+// there would ghost-click at the cancel point -- a phantom order the player never gave.
+console.log('\n5c. cancelled touch emits no click');
+await drain();
+await touch('touchStart', [{ x: 500, y: 400 }]);
+await wait(80);
+await touch('touchCancel', []);
+await wait(150);
+{
+  const ev = await drain();
+  check(!ev.some(e => e.tag === 'mousedown'), 'no button press from a cancelled touch',
+    JSON.stringify(ev));
 }
 
 // ---- 6. desktop is untouched ----
