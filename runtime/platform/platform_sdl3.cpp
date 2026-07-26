@@ -3,6 +3,10 @@
 #include "dx8wasm/contract.h"
 #include <SDL3/SDL.h>
 #include <cstring>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5_webgl.h>
+#endif
 
 namespace {
 SDL_Window* g_window = nullptr;
@@ -25,7 +29,35 @@ bool create_gl_context(int width, int height) {
   if (!g_ctx) { SDL_DestroyWindow(g_window); g_window = nullptr; return false; }
   return SDL_GL_MakeCurrent(g_window, g_ctx);
 }
-void present() { if (g_window) SDL_GL_SwapWindow(g_window); }
+void present() {
+#ifdef __EMSCRIPTEN__
+  // A browser can take the WebGL context away at any time, and mobile browsers routinely do
+  // it when a tab is backgrounded (the same hazard the iOS/Android ports handle by pausing
+  // around SDL_EVENT_DID_ENTER_BACKGROUND: the drawable is simply gone). Every GL call after
+  // that silently becomes a no-op that sets an error, so the game keeps running and keeps
+  // "rendering" into nothing -- a black canvas with no diagnostic, which reads to a player as
+  // "it crashed".
+  //
+  // We cannot transparently recover: restoring would mean re-uploading every texture, buffer
+  // and shader the engine has created, and the engine has no notion of a device reset on this
+  // path. So detect it, stop touching the GPU, and tell the page once so it can say something
+  // actionable instead of going black. Checked here because present() is the one call every
+  // frame passes through, on the thread that owns the context.
+  static bool s_lost = false;
+  if (!s_lost) {
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_get_current_context();
+    if (ctx && emscripten_is_webgl_context_lost(ctx)) {
+      s_lost = true;
+      MAIN_THREAD_EM_ASM({
+        console.error('[gl] WebGL context lost - rendering stopped');
+        if (typeof gxContextLost === 'function') gxContextLost();
+      });
+    }
+  }
+  if (s_lost) return;
+#endif
+  if (g_window) SDL_GL_SwapWindow(g_window);
+}
 bool gl_context_alive() { return g_ctx != nullptr; }
 }   // namespace platform
 
