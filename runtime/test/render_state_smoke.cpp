@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Drives the 2.6 render-state subset across four sub-scenes in one context:
+// Drives the 2.6 render-state subset across five sub-scenes in one context:
 //   depth  — a far quad must NOT overwrite a nearer one (Z test + write)
 //   cull   — a front-facing triangle disappears under D3DCULL_CCW
 //   alpha  — a sub-ref-alpha quad is discarded by the in-shader alpha test
+//   get    — GetRenderState round-trips, so save/restore brackets don't zero state
 //   blend  — a 50%-alpha quad over an opaque background blends (reported pixel)
 // Each internal check reports an error on failure; the blend result is the
 // harness-asserted pixel [153,51,102,191].
@@ -87,8 +88,33 @@ int main() {
   center(px);
   if (!near3(px, 0, 0, 0)) { report_error("alpha test: sub-ref quad was not discarded"); return 1; }
 
-  // Scene 4 — alpha blend: 50% red over opaque blue background.
+  // Scene 4 — GetRenderState must round-trip, so the save/restore idiom survives.
+  // Real DX8 engines bracket a pass with GetRenderState(X, &old) / Set(X, temp) /
+  // Set(X, old). A GetRenderState that always reports 0 turns that into a permanent
+  // "restore to zero" — for D3DRS_COLORWRITEENABLE that silently kills every later
+  // draw in the frame (Generals' stencil-shadow pass does exactly this, and the 2D UI
+  // it draws afterwards disappeared while the 3D scene before it stayed visible).
   g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, 0);
+  {
+    DWORD got = 0xDEADBEEFu;
+    g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+    g_dev->GetRenderState(D3DRS_COLORWRITEENABLE, &got);
+    if (got != 0xF) { report_error("GetRenderState(COLORWRITEENABLE) did not round-trip"); return 1; }
+
+    // Now the full idiom, checked by its pixel effect: mask writes off for one draw,
+    // restore the saved value, and the next draw must reach the framebuffer.
+    g_dev->Clear(0, nullptr, D3DCLEAR_TARGET, 0xFF000000u, 1.0f, 0);
+    g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0);
+    quad(0.0f, 0xFF00FF00u);     // masked off — must NOT appear
+    center(px);
+    if (!near3(px, 0, 0, 0)) { report_error("colorwrite 0 did not mask the draw"); return 1; }
+    g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, got);   // "restore" what we saved
+    quad(0.0f, 0xFFFF0000u);     // must be visible again
+    center(px);
+    if (!near3(px, 255, 0, 0)) { report_error("restored colorwrite still masks draws"); return 1; }
+  }
+
+  // Scene 5 — alpha blend: 50% red over opaque blue background.
   g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, 1);
   g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
   g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);

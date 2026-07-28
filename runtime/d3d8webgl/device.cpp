@@ -500,6 +500,10 @@ struct Device8 : IDirect3DDevice8 {
   bool  stencilEnable = false;
   DWORD stencilFail = D3DSTENCILOP_KEEP, stencilZFail = D3DSTENCILOP_KEEP, stencilPass = D3DSTENCILOP_KEEP;
   DWORD stencilFunc = D3DCMP_ALWAYS, stencilRef = 0, stencilMask = 0xFFFFFFFF, stencilWriteMask = 0xFFFFFFFF;
+  // Mirror of every SetRenderState value, so GetRenderState can answer truthfully.
+  // D3DRS_* tops out well under this in the D3D8 subset (runtime/d3d8/d3d8.h).
+  static constexpr unsigned kRenderStateCount = 256;
+  DWORD rsCache[kRenderStateCount]{};
   float vpW, vpH;
   D3DVIEWPORT8 viewport;
   GLuint scratchVB = 0, scratchIB = 0;   // reused for DrawPrimitiveUP (user-pointer) draws
@@ -509,6 +513,17 @@ struct Device8 : IDirect3DDevice8 {
     set_identity(texMat[0]); set_identity(texMat[1]);
     viewport = {0, 0, (DWORD)w, (DWORD)h, 0.0f, 1.0f};
     glDepthFunc(GL_LEQUAL);
+    // Seed the render-state mirror with the state this device actually starts in, so a
+    // GetRenderState before any SetRenderState reports the truth rather than zero.
+    rsCache[D3DRS_COLORWRITEENABLE] = 0xF;
+    rsCache[D3DRS_ZFUNC]            = D3DCMP_LESSEQUAL;
+    rsCache[D3DRS_ALPHAFUNC]        = D3DCMP_ALWAYS;
+    rsCache[D3DRS_SRCBLEND]         = D3DBLEND_ONE;
+    rsCache[D3DRS_DESTBLEND]        = D3DBLEND_ZERO;
+    rsCache[D3DRS_STENCILFUNC]      = D3DCMP_ALWAYS;
+    rsCache[D3DRS_STENCILMASK]      = 0xFFFFFFFFu;
+    rsCache[D3DRS_STENCILWRITEMASK] = 0xFFFFFFFFu;
+    rsCache[D3DRS_TEXTUREFACTOR]    = 0xFFFFFFFFu;
   }
 
   HRESULT QueryInterface(REFIID, void** o) override { if (o) { *o = this; ++refs; } return D3D_OK; }
@@ -616,6 +631,10 @@ struct Device8 : IDirect3DDevice8 {
     return D3D_OK;
   }
   HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) override {
+    // Record every state, handled or not, so GetRenderState can report it back. Engines
+    // bracket passes with Get(X,&old)/Set(X,temp)/Set(X,old); a Get that reports 0 turns
+    // the restore into "disable", which is invisible until the bracketed state matters.
+    if (State < kRenderStateCount) rsCache[State] = Value;
     switch (State) {
       case D3DRS_ZENABLE:          zTest = Value != 0; Value ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST); break;
       case D3DRS_ZWRITEENABLE:     zWrite = Value != 0; glDepthMask(zWrite ? GL_TRUE : GL_FALSE); break;
@@ -997,7 +1016,11 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT GetLightEnable(DWORD i, BOOL* e) override { if (e) *e = (i < ff::MAX_LIGHTS && lightOn[i]) ? 1 : 0; return D3D_OK; }
   HRESULT SetClipPlane(DWORD, const float*) override { return D3D_OK; }
   HRESULT GetClipPlane(DWORD, float*) override { return D3D_OK; }
-  HRESULT GetRenderState(D3DRENDERSTATETYPE, DWORD* v) override { if (v) *v = 0; return D3D_OK; }
+  HRESULT GetRenderState(D3DRENDERSTATETYPE State, DWORD* v) override {
+    if (!v) return D3DERR_INVALIDCALL;
+    *v = State < kRenderStateCount ? rsCache[State] : 0;
+    return D3D_OK;
+  }
   HRESULT BeginStateBlock() override { warn_once("BeginStateBlock"); return D3D_OK; }
   HRESULT EndStateBlock(DWORD* t) override { if (t) *t = 0; return D3D_OK; }
   HRESULT ApplyStateBlock(DWORD) override { return D3D_OK; }
