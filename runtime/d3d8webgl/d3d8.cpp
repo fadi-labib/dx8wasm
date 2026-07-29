@@ -5,6 +5,7 @@
 #include "caps_fill.h"   // shared fill_caps() — device.cpp reports the SAME caps
 #include "format_support.h"   // the capability queries answer from the texture path's predicate
 #include <cstring>
+#include <cstdio>
 #include <emscripten.h>  // read the real canvas size for adapter mode enumeration
 
 IDirect3DDevice8* dx8_create_device(int w, int h);   // from device.cpp
@@ -44,7 +45,19 @@ struct D3D8 : IDirect3D8 {
 
   HRESULT RegisterSoftwareDevice(void*) override { return D3DERR_INVALIDCALL; }
   UINT GetAdapterCount() override { return 1; }
-  HRESULT GetAdapterIdentifier(UINT, DWORD, void*) override { return D3D_OK; }
+  // Name ourselves honestly. Leaving this blank is not neutral: the engine reads the strings
+  // and ids to classify the GPU, and an all-zero identifier reads as "unknown card", which
+  // pushes quality heuristics to their lowest tier. Vendor/device ids stay 0 on purpose —
+  // claiming an NVIDIA or ATI id would trigger vendor-specific driver workarounds. The driver
+  // name must not start with '3': dx8caps.cpp reads that as 3dfx.
+  HRESULT GetAdapterIdentifier(UINT, DWORD, D3DADAPTER_IDENTIFIER8* id) override {
+    if (!id) return D3DERR_INVALIDCALL;
+    *id = D3DADAPTER_IDENTIFIER8{};
+    std::snprintf(id->Driver, sizeof id->Driver, "dx8wasm");
+    std::snprintf(id->Description, sizeof id->Description, "dx8wasm (D3D8 over WebGL2)");
+    id->DriverVersion = 1;
+    return D3D_OK;
+  }
   UINT GetAdapterModeCount(UINT) override { AdapterMode md[3]; return collect_modes(md); }
   HRESULT EnumAdapterModes(UINT, UINT i, D3DDISPLAYMODE* m) override {
     AdapterMode md[3]; UINT n = collect_modes(md);

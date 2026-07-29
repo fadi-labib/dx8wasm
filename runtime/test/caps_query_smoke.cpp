@@ -66,6 +66,16 @@ int main() {
     report_error("a colour format was accepted as depth/stencil"); return 1;
   }
 
+  // The adapter must name itself. A zeroed identifier makes the engine classify the device as
+  // an unknown card, which silently drags quality heuristics (GameLOD) down to their floor.
+  {
+    D3DADAPTER_IDENTIFIER8 id{};
+    if (d3d->GetAdapterIdentifier(0, 0, &id) != D3D_OK) { report_error("GetAdapterIdentifier failed"); return 1; }
+    if (id.Description[0] == '\0') { report_error("adapter reported an empty description"); return 1; }
+    // dx8caps.cpp falls back to "vendor is 3dfx" when the driver name starts with '3'.
+    if (id.Driver[0] == '3') { report_error("driver name starting with '3' trips the 3dfx heuristic"); return 1; }
+  }
+
   d3d->Release();
   report_pixel(1, 0, 0, 255);
   return 0;

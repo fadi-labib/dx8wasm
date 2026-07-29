@@ -160,6 +160,19 @@ struct D3DVECTOR { float x, y, z; };
 struct D3DCOLORVALUE { float r, g, b, a; };
 struct D3DLOCKED_RECT { int32_t Pitch; void* pBits; };
 struct D3DDISPLAYMODE { UINT Width, Height, RefreshRate; D3DFORMAT Format; };
+
+// Adapter identity. The layout must match the full-ABI d3d8.h a consuming game compiles
+// against (DXVK's d3d8types.h): 512-byte name buffers and a 64-bit DriverVersion. Games read
+// these strings and ids to classify the GPU, so leaving them blank is not neutral.
+#define MAX_DEVICE_IDENTIFIER_STRING 512
+struct D3DADAPTER_IDENTIFIER8 {
+  char     Driver[MAX_DEVICE_IDENTIFIER_STRING];
+  char     Description[MAX_DEVICE_IDENTIFIER_STRING];
+  int64_t  DriverVersion;
+  DWORD    VendorId, DeviceId, SubSysId, Revision;
+  struct { uint32_t a; uint16_t b, c; uint8_t d[8]; } DeviceIdentifier;   // GUID
+  DWORD    WHQLLevel;
+};
 struct D3DVIEWPORT8 { DWORD X, Y, Width, Height; float MinZ, MaxZ; };
 struct D3DGAMMARAMP { WORD red[256], green[256], blue[256]; };
 struct D3DRASTER_STATUS { BOOL InVBlank; UINT ScanLine; };
@@ -414,7 +427,7 @@ struct IDirect3DDevice8 : IUnknownD3D {
 struct IDirect3D8 : IUnknownD3D {
   virtual HRESULT RegisterSoftwareDevice(void*) = 0;
   virtual UINT GetAdapterCount() = 0;
-  virtual HRESULT GetAdapterIdentifier(UINT, DWORD, void*) = 0;
+  virtual HRESULT GetAdapterIdentifier(UINT, DWORD, D3DADAPTER_IDENTIFIER8*) = 0;
   virtual UINT GetAdapterModeCount(UINT Adapter) = 0;
   virtual HRESULT EnumAdapterModes(UINT Adapter, UINT Mode, D3DDISPLAYMODE* pMode) = 0;
   virtual HRESULT GetAdapterDisplayMode(UINT Adapter, D3DDISPLAYMODE* pMode) = 0;
