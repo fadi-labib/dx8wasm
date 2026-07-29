@@ -43,6 +43,11 @@ using REFIID = const GUID&;
 #define D3DCREATE_SOFTWARE_VERTEXPROCESSING 0x00000020u
 #define D3DADAPTER_DEFAULT 0
 
+// Usage flags. Only the two the capability queries must reason about are defined; both name
+// resources this backend cannot create (see CreateRenderTarget / CreateDepthStencilSurface).
+#define D3DUSAGE_RENDERTARGET   0x00000001L
+#define D3DUSAGE_DEPTHSTENCIL   0x00000002L
+
 // --- FVF ---------------------------------------------------------------------
 #define D3DFVF_XYZ      0x0002u
 #define D3DFVF_XYZRHW   0x0004u

@@ -3,6 +3,7 @@
 // are real enough for device creation, the rest are permissive stubs.
 #include "d3d8/d3d8.h"
 #include "caps_fill.h"   // shared fill_caps() — device.cpp reports the SAME caps
+#include "format_support.h"   // the capability queries answer from the texture path's predicate
 #include <cstring>
 #include <emscripten.h>  // read the real canvas size for adapter mode enumeration
 
@@ -57,10 +58,46 @@ struct D3D8 : IDirect3D8 {
     m->Width = md[0].w; m->Height = md[0].h; m->RefreshRate = 60; m->Format = D3DFMT_X8R8G8B8;   // native canvas
     return D3D_OK;
   }
-  HRESULT CheckDeviceType(UINT, D3DDEVTYPE, D3DFORMAT, D3DFORMAT, BOOL) override { return D3D_OK; }
-  HRESULT CheckDeviceFormat(UINT, D3DDEVTYPE, D3DFORMAT, DWORD, D3DRESOURCETYPE, D3DFORMAT) override { return D3D_OK; }
-  HRESULT CheckDeviceMultiSampleType(UINT, D3DDEVTYPE, D3DFORMAT, BOOL, D3DMULTISAMPLE_TYPE) override { return D3D_OK; }
-  HRESULT CheckDepthStencilMatch(UINT, D3DDEVTYPE, D3DFORMAT, D3DFORMAT, D3DFORMAT) override { return D3D_OK; }
+  // A back buffer is what CreateDevice actually presents: an 8888/565 colour surface.
+  static bool presentable(D3DFORMAT f) {
+    return f == D3DFMT_X8R8G8B8 || f == D3DFMT_A8R8G8B8 || f == D3DFMT_R5G6B5;
+  }
+  // The context is created with 24-bit depth + 8-bit stencil (SDL3Main sets both), so those
+  // are the only depth formats that mean anything here.
+  static bool depth_format(D3DFORMAT f) {
+    return f == D3DFMT_D24S8 || f == D3DFMT_D24X8 || f == D3DFMT_D16 || f == D3DFMT_D32;
+  }
+
+  HRESULT CheckDeviceType(UINT, D3DDEVTYPE, D3DFORMAT DisplayFormat, D3DFORMAT BackBufferFormat,
+                          BOOL) override {
+    return presentable(DisplayFormat) && presentable(BackBufferFormat) ? D3D_OK : D3DERR_NOTAVAILABLE;
+  }
+  // Answered from the same predicates the texture path enforces (format_support.h), so caps
+  // and behaviour cannot drift. Usages and resource types with no Create* path are refused —
+  // a blanket yes here is what lets an engine commit to a format that fails at upload.
+  HRESULT CheckDeviceFormat(UINT, D3DDEVTYPE, D3DFORMAT, DWORD Usage, D3DRESOURCETYPE RType,
+                            D3DFORMAT CheckFormat) override {
+    if (Usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) return D3DERR_NOTAVAILABLE;
+    switch (RType) {
+      case D3DRTYPE_TEXTURE:
+        return texfmt::supported(CheckFormat) || dxt::is_dxt(CheckFormat) ? D3D_OK : D3DERR_NOTAVAILABLE;
+      case D3DRTYPE_SURFACE:
+        return texfmt::supported(CheckFormat) ? D3D_OK : D3DERR_NOTAVAILABLE;
+      default:   // cube, volume, vertex/index buffers: no Create* path in this backend
+        return D3DERR_NOTAVAILABLE;
+    }
+  }
+  // No multisampled path exists; claiming one would silently produce aliased output.
+  HRESULT CheckDeviceMultiSampleType(UINT, D3DDEVTYPE, D3DFORMAT SurfaceFormat, BOOL,
+                                     D3DMULTISAMPLE_TYPE MultiSampleType) override {
+    if (MultiSampleType != D3DMULTISAMPLE_NONE) return D3DERR_NOTAVAILABLE;
+    return presentable(SurfaceFormat) ? D3D_OK : D3DERR_NOTAVAILABLE;
+  }
+  HRESULT CheckDepthStencilMatch(UINT, D3DDEVTYPE, D3DFORMAT, D3DFORMAT RenderTargetFormat,
+                                 D3DFORMAT DepthStencilFormat) override {
+    return presentable(RenderTargetFormat) && depth_format(DepthStencilFormat)
+           ? D3D_OK : D3DERR_NOTAVAILABLE;
+  }
   HRESULT GetDeviceCaps(UINT, D3DDEVTYPE, D3DCAPS8* c) override { if (!c) return D3DERR_INVALIDCALL; fill_caps(c); return D3D_OK; }
   HMONITOR GetAdapterMonitor(UINT) override { return nullptr; }
 
