@@ -4,6 +4,7 @@
 // checks their return values — a wrong vtable layout would dispatch to the wrong
 // slot and return garbage. Pass = [1,0,0,255].
 #include "d3d8/d3d8.h"
+#include "dx8wasm/contract.h"
 #include <emscripten.h>
 
 EM_JS(void, report_pixel, (int r, int g, int b, int a), { window.__gpu = { pixel: [r, g, b, a] }; });
@@ -45,6 +46,11 @@ int main() {
 
   IDirect3DBaseTexture8* bound = (IDirect3DBaseTexture8*)1;
   CHECK(dev->GetTexture(0, &bound) == D3D_OK && bound == nullptr, "GetTexture (none bound)");
+
+  // Stencil is implemented (Set/GetRenderState + the per-draw apply_raster_masks), so the cap
+  // must say so. Denying a working feature misleads a porter as surely as claiming a missing one.
+  CHECK(dx8wasm_has_cap(DX8WASM_CAP_STENCIL) == 1, "stencil cap denied but implemented");
+  CHECK(dx8wasm_has_cap(DX8WASM_CAP_CUBE_TEXTURE) == 0, "cube texture cap claimed but absent");
 
   // A real draw still works through the expanded vtable (high slots).
   dev->Clear(0, nullptr, D3DCLEAR_TARGET, 0xFF204060u, 1.0f, 0);

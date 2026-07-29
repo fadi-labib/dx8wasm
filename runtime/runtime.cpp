@@ -32,8 +32,13 @@ void dx8wasm_shutdown(void) { g_inited = false; }
 // docs/CONFORMANCE.md); the introspection caps below are all advanced features
 // not yet covered. A porter checks these before relying on them.
 int dx8wasm_has_cap(dx8wasm_cap cap) {
-  (void)cap;
-  return 0;   // BC/cube/volume textures, vertex-blend, point sprites, SM1.x, stencil: not yet
+  switch (cap) {
+    // Stencil is real: SetRenderState stores the D3DRS_STENCIL* group and apply_raster_masks
+    // programs glStencilFunc/Op per draw. Denying it sends a porter around a working feature.
+    case DX8WASM_CAP_STENCIL: return 1;
+    // Still absent: BC/cube/volume textures, vertex-blend, point sprites, SM1.x.
+    default: return 0;
+  }
 }
 
 }
