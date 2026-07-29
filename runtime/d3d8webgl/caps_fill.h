@@ -41,8 +41,10 @@ inline void fill_caps(D3DCAPS8* c) {
   c->DestBlendCaps = c->SrcBlendCaps;
   c->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB | D3DPSHADECAPS_SPECULARGOURAUDRGB |
                  D3DPSHADECAPS_ALPHAGOURAUDBLEND | D3DPSHADECAPS_FOGGOURAUD;
+  // No cube maps: CreateCubeTexture refuses and CheckDeviceFormat rejects D3DRTYPE_CUBETEXTURE.
+  // Advertising them would send an engine down a path that can only fail.
   c->TextureCaps = D3DPTEXTURECAPS_PERSPECTIVE | D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP |
-                   D3DPTEXTURECAPS_PROJECTED | D3DPTEXTURECAPS_CUBEMAP | D3DPTEXTURECAPS_MIPCUBEMAP;
+                   D3DPTEXTURECAPS_PROJECTED;
   c->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MINFANISOTROPIC |
                          D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR |
                          D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
@@ -66,7 +68,7 @@ inline void fill_caps(D3DCAPS8* c) {
   c->MaxTextureBlendStages = 2; c->MaxSimultaneousTextures = 2;
   c->VertexProcessingCaps = D3DVTXPCAPS_TEXGEN | D3DVTXPCAPS_MATERIALSOURCE7 | D3DVTXPCAPS_DIRECTIONALLIGHTS |
                             D3DVTXPCAPS_POSITIONALLIGHTS | D3DVTXPCAPS_LOCALVIEWER;
-  c->MaxActiveLights = 8; c->MaxUserClipPlanes = 1;
+  c->MaxActiveLights = 8; c->MaxUserClipPlanes = 0;   // SetClipPlane is not implemented
   c->MaxPointSize = 64.0f;
   c->MaxPrimitiveCount = 0x000FFFFF; c->MaxVertexIndex = 0x000FFFFF; c->MaxStreams = 16; c->MaxStreamStride = 256;
   c->VertexShaderVersion = 0; c->PixelShaderVersion = 0;

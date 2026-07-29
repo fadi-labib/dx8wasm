@@ -41,6 +41,12 @@ target_link_libraries(d3d8_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(d3d8_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(d3d8_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(honest_stubs_smoke runtime/test/honest_stubs_smoke.cpp)
+target_include_directories(honest_stubs_smoke PRIVATE runtime runtime/d3d8)
+target_link_libraries(honest_stubs_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(honest_stubs_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(honest_stubs_smoke PROPERTIES SUFFIX ".js")
+
 add_executable(caps_query_smoke runtime/test/caps_query_smoke.cpp)
 target_include_directories(caps_query_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(caps_query_smoke PRIVATE dx8_d3d8webgl)

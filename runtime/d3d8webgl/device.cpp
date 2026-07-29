@@ -919,7 +919,10 @@ struct Device8 : IDirect3DDevice8 {
 
   // --- ABI-complete stubs (log-once / sensible defaults; Phase C) --------------
   HRESULT TestCooperativeLevel() override { return D3D_OK; }
-  UINT GetAvailableTextureMem() override { return 256u * 1024 * 1024; }
+  // No texture-memory accounting exists, and WebGL exposes none. A made-up figure is not
+  // harmless: engines feed it into quality heuristics (Generals' GameLOD switches behaviour at
+  // exactly 256 MB). 0 reads as "unknown" and cannot masquerade as a real budget.
+  UINT GetAvailableTextureMem() override { warn_once("GetAvailableTextureMem"); return 0; }
   HRESULT ResourceManagerDiscardBytes(DWORD) override { return D3D_OK; }
   HRESULT GetDirect3D(IDirect3D8** o) override { if (o) *o = nullptr; warn_once("GetDirect3D"); return D3DERR_INVALIDCALL; }
   HRESULT GetDeviceCaps(D3DCAPS8* c) override {
@@ -1007,7 +1010,13 @@ struct Device8 : IDirect3DDevice8 {
     return D3D_OK;
   }
   HRESULT GetFrontBuffer(IDirect3DSurface8*) override { warn_once("GetFrontBuffer"); return D3DERR_INVALIDCALL; }
-  HRESULT SetRenderTarget(IDirect3DSurface8*, IDirect3DSurface8*) override { return D3D_OK; }
+  // Only the backbuffer exists (CreateRenderTarget and CreateDepthStencilSurface both refuse),
+  // so a request to render elsewhere must be refused rather than silently drawn to the screen.
+  // A null target means "restore the default", which is where we already are.
+  HRESULT SetRenderTarget(IDirect3DSurface8* target, IDirect3DSurface8*) override {
+    if (!target) return D3D_OK;
+    warn_once("SetRenderTarget"); return D3DERR_INVALIDCALL;
+  }
   HRESULT GetRenderTarget(IDirect3DSurface8** o) override { if (o) *o = nullptr; return D3DERR_INVALIDCALL; }
   HRESULT GetDepthStencilSurface(IDirect3DSurface8** o) override { if (o) *o = nullptr; return D3DERR_INVALIDCALL; }
   HRESULT GetTransform(D3DTRANSFORMSTATETYPE State, D3DMATRIX* m) override {
@@ -1020,19 +1029,24 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT GetMaterial(D3DMATERIAL8* m) override { if (m) *m = material; return D3D_OK; }
   HRESULT GetLight(DWORD i, D3DLIGHT8* l) override { if (l && i < ff::MAX_LIGHTS) *l = lights[i]; return D3D_OK; }
   HRESULT GetLightEnable(DWORD i, BOOL* e) override { if (e) *e = (i < ff::MAX_LIGHTS && lightOn[i]) ? 1 : 0; return D3D_OK; }
-  HRESULT SetClipPlane(DWORD, const float*) override { return D3D_OK; }
-  HRESULT GetClipPlane(DWORD, float*) override { return D3D_OK; }
+  // No user clip planes are implemented (caps advertise MaxUserClipPlanes = 0 to match), and
+  // GetClipPlane would otherwise leave the caller's buffer untouched while reporting success —
+  // an unwritten buffer is worse than a zeroed one because the garbage is nondeterministic.
+  HRESULT SetClipPlane(DWORD, const float*) override { warn_once("SetClipPlane"); return D3DERR_INVALIDCALL; }
+  HRESULT GetClipPlane(DWORD, float*) override { warn_once("GetClipPlane"); return D3DERR_INVALIDCALL; }
   HRESULT GetRenderState(D3DRENDERSTATETYPE State, DWORD* v) override {
     if (!v) return D3DERR_INVALIDCALL;
     *v = State < kRenderStateCount ? rsCache[State] : 0;
     return D3D_OK;
   }
-  HRESULT BeginStateBlock() override { warn_once("BeginStateBlock"); return D3D_OK; }
-  HRESULT EndStateBlock(DWORD* t) override { if (t) *t = 0; return D3D_OK; }
-  HRESULT ApplyStateBlock(DWORD) override { return D3D_OK; }
-  HRESULT CaptureStateBlock(DWORD) override { return D3D_OK; }
-  HRESULT DeleteStateBlock(DWORD) override { return D3D_OK; }
-  HRESULT CreateStateBlock(D3DSTATEBLOCKTYPE, DWORD* t) override { if (t) *t = 0; return D3D_OK; }
+  // State blocks record nothing. Reporting success would make "restore" a silent no-op — the
+  // same class of failure as a GetRenderState that always answers zero, just via another API.
+  HRESULT BeginStateBlock() override { warn_once("BeginStateBlock"); return D3DERR_INVALIDCALL; }
+  HRESULT EndStateBlock(DWORD* t) override { if (t) *t = 0; warn_once("EndStateBlock"); return D3DERR_INVALIDCALL; }
+  HRESULT ApplyStateBlock(DWORD) override { warn_once("ApplyStateBlock"); return D3DERR_INVALIDCALL; }
+  HRESULT CaptureStateBlock(DWORD) override { warn_once("CaptureStateBlock"); return D3DERR_INVALIDCALL; }
+  HRESULT DeleteStateBlock(DWORD) override { return D3D_OK; }   // deleting nothing is honest
+  HRESULT CreateStateBlock(D3DSTATEBLOCKTYPE, DWORD* t) override { if (t) *t = 0; warn_once("CreateStateBlock"); return D3DERR_INVALIDCALL; }
   HRESULT SetClipStatus(const D3DCLIPSTATUS8*) override { return D3D_OK; }
   HRESULT GetClipStatus(D3DCLIPSTATUS8* s) override { if (s) { s->ClipUnion = 0; s->ClipIntersection = 0xffffffff; } return D3D_OK; }
   HRESULT GetTexture(DWORD, IDirect3DBaseTexture8** o) override { if (o) { *o = texture; if (texture) texture->AddRef(); } return D3D_OK; }
@@ -1044,8 +1058,10 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT ValidateDevice(DWORD* n) override { if (n) *n = 1; return D3D_OK; }
   HRESULT GetInfo(DWORD, void*, DWORD) override { return D3DERR_INVALIDCALL; }
-  HRESULT SetPaletteEntries(UINT, const PALETTEENTRY*) override { return D3D_OK; }
-  HRESULT GetPaletteEntries(UINT, PALETTEENTRY*) override { return D3D_OK; }
+  // No palettized path exists; GetPaletteEntries would report success without writing a single
+  // entry, leaving the caller to read whatever was already in its buffer.
+  HRESULT SetPaletteEntries(UINT, const PALETTEENTRY*) override { warn_once("SetPaletteEntries"); return D3DERR_INVALIDCALL; }
+  HRESULT GetPaletteEntries(UINT, PALETTEENTRY*) override { warn_once("GetPaletteEntries"); return D3DERR_INVALIDCALL; }
   HRESULT SetCurrentTexturePalette(UINT) override { return D3D_OK; }
   HRESULT GetCurrentTexturePalette(UINT* n) override { if (n) *n = 0; return D3D_OK; }
   HRESULT DrawPrimitive(D3DPRIMITIVETYPE Type, UINT StartVertex, UINT PrimitiveCount) override {
@@ -1086,21 +1102,25 @@ struct Device8 : IDirect3DDevice8 {
     return D3D_OK;
   }
   HRESULT ProcessVertices(UINT, UINT, UINT, IDirect3DVertexBuffer8*, DWORD) override { warn_once("ProcessVertices"); return D3DERR_INVALIDCALL; }
-  HRESULT CreateVertexShader(const DWORD*, const DWORD*, DWORD* h, DWORD) override { if (h) *h = 0; warn_once("CreateVertexShader"); return D3D_OK; }
+  // Nothing is compiled, so creation must fail and the caller must take its fixed-function
+  // fallback path rather than believing it holds a shader.
+  HRESULT CreateVertexShader(const DWORD*, const DWORD*, DWORD* h, DWORD) override { if (h) *h = 0; warn_once("CreateVertexShader"); return D3DERR_INVALIDCALL; }
   HRESULT GetVertexShader(DWORD* h) override { if (h) *h = fvf; return D3D_OK; }
   HRESULT DeleteVertexShader(DWORD) override { return D3D_OK; }
   HRESULT SetVertexShaderConstant(DWORD, const void*, DWORD) override { return D3D_OK; }
-  HRESULT GetVertexShaderConstant(DWORD, void*, DWORD) override { return D3D_OK; }
+  // No constant store exists — reporting success without writing leaves the caller reading
+  // uninitialised memory and calling it shader state.
+  HRESULT GetVertexShaderConstant(DWORD, void*, DWORD) override { warn_once("GetVertexShaderConstant"); return D3DERR_INVALIDCALL; }
   HRESULT GetVertexShaderDeclaration(DWORD, void*, DWORD*) override { return D3DERR_INVALIDCALL; }
   HRESULT GetVertexShaderFunction(DWORD, void*, DWORD*) override { return D3DERR_INVALIDCALL; }
   HRESULT GetStreamSource(UINT, IDirect3DVertexBuffer8** o, UINT* s) override { if (o) { *o = stream; if (stream) stream->AddRef(); } if (s) *s = stride; return D3D_OK; }
   HRESULT GetIndices(IDirect3DIndexBuffer8** o, UINT* base) override { if (o) { *o = indices; if (indices) indices->AddRef(); } if (base) *base = 0; return D3D_OK; }
   HRESULT SetPixelShader(DWORD) override { warn_once("SetPixelShader"); return D3D_OK; }
   HRESULT GetPixelShader(DWORD* h) override { if (h) *h = 0; return D3D_OK; }
-  HRESULT CreatePixelShader(const DWORD*, DWORD* h) override { if (h) *h = 0; warn_once("CreatePixelShader"); return D3D_OK; }
+  HRESULT CreatePixelShader(const DWORD*, DWORD* h) override { if (h) *h = 0; warn_once("CreatePixelShader"); return D3DERR_INVALIDCALL; }
   HRESULT DeletePixelShader(DWORD) override { return D3D_OK; }
   HRESULT SetPixelShaderConstant(DWORD, const void*, DWORD) override { return D3D_OK; }
-  HRESULT GetPixelShaderConstant(DWORD, void*, DWORD) override { return D3D_OK; }
+  HRESULT GetPixelShaderConstant(DWORD, void*, DWORD) override { warn_once("GetPixelShaderConstant"); return D3DERR_INVALIDCALL; }
   HRESULT GetPixelShaderFunction(DWORD, void*, DWORD*) override { return D3DERR_INVALIDCALL; }
   HRESULT DrawRectPatch(UINT, const float*, const D3DRECTPATCH_INFO*) override { return D3DERR_INVALIDCALL; }
   HRESULT DrawTriPatch(UINT, const float*, const D3DTRIPATCH_INFO*) override { return D3DERR_INVALIDCALL; }

@@ -29,7 +29,9 @@ int main() {
   // Mid/high slots that only exist in the full interface — a truncated vtable
   // would land these calls on the wrong method.
   CHECK(dev->TestCooperativeLevel() == D3D_OK, "TestCooperativeLevel");
-  CHECK(dev->GetAvailableTextureMem() > 0, "GetAvailableTextureMem");
+  // 0 means "unknown" and is the honest answer — WebGL exposes no texture-memory budget, and a
+  // fabricated figure gets consumed by engine quality heuristics.
+  CHECK(dev->GetAvailableTextureMem() == 0, "GetAvailableTextureMem");
   CHECK(dev->BeginScene() == D3D_OK && dev->EndScene() == D3D_OK, "Begin/EndScene");
 
   D3DCAPS8 caps;
