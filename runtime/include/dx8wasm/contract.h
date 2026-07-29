@@ -60,6 +60,10 @@ typedef struct {
     uint32_t unhandled_texture_stage_ops;
     uint32_t unhandled_formats;
     uint32_t fallbacks_taken;
+    // Appended (keeps existing offsets): Set*TextureStageState tokens with no implementation.
+    // Without this the stage-state path could drop tokens with no trace, while the render-state
+    // path reported its gaps — so the conformance matrix under-reported what was missing.
+    uint32_t unhandled_texture_stage_states;
 } dx8wasm_coverage;
 
 void dx8wasm_get_coverage(dx8wasm_coverage* out);

@@ -630,7 +630,9 @@ struct Device8 : IDirect3DDevice8 {
       case D3DTSS_MIPFILTER: s.mipFilter = Value; break;
       case D3DTSS_ADDRESSU:  s.addressU  = Value; break;
       case D3DTSS_ADDRESSV:  s.addressV  = Value; break;
-      default: break;   // remaining stage states unused
+      // Report rather than swallow, matching SetRenderState. Anisotropy and LOD bias arrive
+      // here and would otherwise vanish without ever showing up in the conformance matrix.
+      default: coverage::unhandled_stage_state(Type); break;
     }
     return D3D_OK;
   }

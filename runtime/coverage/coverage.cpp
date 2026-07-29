@@ -11,7 +11,7 @@ void* g_user = nullptr;
 bool g_logging = true;       // gated by dx8wasm_init(log_unimplemented)
 std::set<uint64_t> g_seen;   // distinct (family, value) already reported
 
-enum Family { RS = 0, TOP = 1, FMT = 2 };
+enum Family { RS = 0, TOP = 1, FMT = 2, TSS = 3 };
 
 // Every unhandled token is a fallback (we ignore/substitute and keep rendering),
 // so bump both the category counter and fallbacks_taken. Log + callback fire
@@ -30,6 +30,7 @@ namespace coverage {
 void unhandled_render_state(uint32_t s) { note(RS,  "D3DRS",  s, g_counts.unhandled_render_states); }
 void unhandled_texture_op(uint32_t o)   { note(TOP, "D3DTOP", o, g_counts.unhandled_texture_stage_ops); }
 void unhandled_format(uint32_t f)       { note(FMT, "D3DFMT", f, g_counts.unhandled_formats); }
+void unhandled_stage_state(uint32_t t)  { note(TSS, "D3DTSS", t, g_counts.unhandled_texture_stage_states); }
 void set_logging(bool on) { g_logging = on; }
 } // namespace coverage
 
