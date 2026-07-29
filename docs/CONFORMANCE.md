@@ -10,7 +10,7 @@ Scope: the fixed-function subset a DirectX-8 game (target: C&C Generals) needs.
 "fallback" means the token is safely ignored/substituted and logged via the
 coverage layer — never silently wrong.
 
-## Render states (22/26 handled)
+## Render states (23/26 handled)
 
 | State | Status |
 |-------|--------|
@@ -38,7 +38,7 @@ coverage layer — never silently wrong.
 | `D3DRS_DITHERENABLE` | ✅ handled |
 | `D3DRS_ZBIAS` | ✅ handled |
 | `D3DRS_SHADEMODE` | ✅ handled |
-| `D3DRS_STENCILENABLE` | ⚠️ fallback |
+| `D3DRS_STENCILENABLE` | ✅ handled |
 | `D3DRS_TEXTUREFACTOR` | ✅ handled |
 
 ## Texture-stage color ops (6/6 handled)

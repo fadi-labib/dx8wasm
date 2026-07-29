@@ -26,6 +26,32 @@ for exactly which tokens are implemented vs fall back.
 - **No blocking loop**: the browser can't block. Convert the game loop to an
   `emscripten_set_main_loop` callback.
 
+### Stubs fail loudly
+
+dx8wasm implements a subset of D3D8. Where it stops, it says so — it never returns a
+plausible-looking value it made up. Three rules hold across the whole surface:
+
+1. **A `Get*` for state the device tracks answers from that state.** `GetRenderState`,
+   `GetTextureStageState`, `GetTransform`, `GetMaterial`, `GetLight` all round-trip what you
+   set, because engines bracket passes with `Get(X,&old)` / `Set(X,temp)` / `Set(X,old)`.
+2. **Anything unimplemented returns `D3DERR_INVALIDCALL` or `D3DERR_NOTAVAILABLE`** — never
+   `D3D_OK`. That includes state blocks, shader creation, clip planes, palettes and
+   render-target switching. Expect failures and take your fallback path; do not assume success.
+3. **Capability queries derive from the same predicate the implementation uses.**
+   `CheckDeviceFormat` answers from `runtime/d3d8webgl/format_support.h`, the header the texture
+   upload path itself enforces, so caps and behaviour cannot drift apart. `D3DCAPS8` advertises
+   only what the device will actually do.
+
+Read the gaps at runtime with `dx8wasm_get_coverage` (§2) — unhandled render states, texture
+ops, stage states and formats are each counted and reported once.
+
+**Why this is a rule.** `GetRenderState` used to answer `0` for everything. Generals' stencil
+shadow pass does `GetRenderState(D3DRS_COLORWRITEENABLE, &old)` → `Set(…, 0)` → `Set(…, old)`,
+so the restore restored *zero* and colour writes stayed off for the rest of the frame. The 3D
+scene, drawn before that pass, kept appearing; the entire 2D UI, drawn after it, vanished. It
+presented as a missing menu, not as a device error — which is exactly what a stub that reports
+success buys you. A stub that fails is debuggable in minutes; one that lies is not.
+
 ---
 
 ## 1. D3D8 API — `runtime/d3d8/d3d8.h`
