@@ -112,6 +112,13 @@ int main() {
     quad(0.0f, 0xFFFF0000u);     // must be visible again
     center(px);
     if (!near3(px, 255, 0, 0)) { report_error("restored colorwrite still masks draws"); return 1; }
+
+    // Same contract for stage state: a Get that always answers 0 breaks save/restore just as
+    // surely, and D3DTSS_COLOROP is exactly the kind of state a pass brackets around itself.
+    DWORD tss = 0xDEADBEEFu;
+    g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    g_dev->GetTextureStageState(0, D3DTSS_COLOROP, &tss);
+    if (tss != D3DTOP_MODULATE) { report_error("GetTextureStageState did not round-trip"); return 1; }
   }
 
   // Scene 5 — alpha blend: 50% red over opaque blue background.

@@ -502,6 +502,9 @@ struct Device8 : IDirect3DDevice8 {
   // D3DRS_* tops out well under this in the D3D8 subset (runtime/d3d8/d3d8.h).
   static constexpr unsigned kRenderStateCount = 256;
   DWORD rsCache[kRenderStateCount]{};
+  // Stage-state mirror, same contract as rsCache: every Set is recorded so Get can answer.
+  static constexpr unsigned kStageCount = 8, kStageStateCount = 32;
+  DWORD tssCache[kStageCount][kStageStateCount]{};
   float vpW, vpH;
   D3DVIEWPORT8 viewport;
   GLuint scratchVB = 0, scratchIB = 0;   // reused for DrawPrimitiveUP (user-pointer) draws
@@ -608,7 +611,10 @@ struct Device8 : IDirect3DDevice8 {
     }
   }
   HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
-    if (Stage > 1) return D3D_OK;   // only 2 stages are wired into the combiner
+    // Record before the stage cutoff below: D3D's Get returns whatever was Set, whether or not
+    // the driver acts on it, and a save/restore bracket depends on exactly that.
+    if (Stage < kStageCount && Type < kStageStateCount) tssCache[Stage][Type] = Value;
+    if (Stage > 1) return D3D_OK;   // only 2 stages are wired into the combiner (see caps)
     StageState& s = stageState[Stage];
     switch (Type) {
       case D3DTSS_COLOROP:   if (!combiner_op_supported(Value)) coverage::unhandled_texture_op(Value); s.colorOp = Value; break;
@@ -1028,7 +1034,12 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT SetClipStatus(const D3DCLIPSTATUS8*) override { return D3D_OK; }
   HRESULT GetClipStatus(D3DCLIPSTATUS8* s) override { if (s) { s->ClipUnion = 0; s->ClipIntersection = 0xffffffff; } return D3D_OK; }
   HRESULT GetTexture(DWORD, IDirect3DBaseTexture8** o) override { if (o) { *o = texture; if (texture) texture->AddRef(); } return D3D_OK; }
-  HRESULT GetTextureStageState(DWORD, D3DTEXTURESTAGESTATETYPE, DWORD* v) override { if (v) *v = 0; return D3D_OK; }
+  HRESULT GetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD* v) override {
+    if (!v) return D3DERR_INVALIDCALL;
+    if (Stage >= kStageCount || Type >= kStageStateCount) return D3DERR_INVALIDCALL;
+    *v = tssCache[Stage][Type];
+    return D3D_OK;
+  }
   HRESULT ValidateDevice(DWORD* n) override { if (n) *n = 1; return D3D_OK; }
   HRESULT GetInfo(DWORD, void*, DWORD) override { return D3DERR_INVALIDCALL; }
   HRESULT SetPaletteEntries(UINT, const PALETTEENTRY*) override { return D3D_OK; }
