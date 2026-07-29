@@ -4,6 +4,7 @@
 // stubs (log-once / coverage / sensible defaults) pending Phase C.
 #include "d3d8/d3d8.h"
 #include "caps_fill.h"   // shared fill_caps() — device caps must match IDirect3D8's
+#include "format_support.h"   // shared format predicates — CheckDeviceFormat answers from these
 #include "platform/platform.h"
 #include "graphics-ff/ff_shader.h"
 #include "coverage/coverage.h"
@@ -100,7 +101,10 @@ struct Surface8;  // fwd: texture mip levels are handed out as surfaces
 // Leondore's d3d8webgl, which converts all textures to RGBA at upload). CPU decode
 // keeps it portable (no reliance on the WEBGL_compressed_texture_s3tc extension).
 namespace dxt {
-inline bool is_dxt(D3DFORMAT f) { return f == D3DFMT_DXT1 || f == D3DFMT_DXT3 || f == D3DFMT_DXT5; }
+// is_dxt lives in format_support.h so the factory's CheckDeviceFormat answers from the same
+// predicate. Pulled in here because this dxt sits inside an anonymous namespace and would
+// otherwise shadow the global one.
+using ::dxt::is_dxt;
 inline UINT block_bytes(D3DFORMAT f) { return f == D3DFMT_DXT1 ? 8u : 16u; }
 inline size_t data_size(UINT w, UINT h, D3DFORMAT f) { return (size_t)((w + 3) / 4) * ((h + 3) / 4) * block_bytes(f); }
 inline void rgb565(uint16_t c, int& r, int& g, int& b) {
@@ -163,15 +167,9 @@ inline UINT bpp(D3DFORMAT f) {
     default: return 4;   // unknown: treat as 32-bit (verbatim), matches old behavior
   }
 }
-inline bool supported(D3DFORMAT f) {
-  switch (f) {
-    case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_R8G8B8:
-    case D3DFMT_R5G6B5: case D3DFMT_X1R5G5B5: case D3DFMT_A1R5G5B5:
-    case D3DFMT_A4R4G4B4: case D3DFMT_X4R4G4B4: case D3DFMT_A8L8:
-    case D3DFMT_A8: case D3DFMT_L8: return true;
-    default: return false;
-  }
-}
+// supported() lives in format_support.h — shared with the factory's CheckDeviceFormat. Pulled
+// in here because this texfmt sits inside an anonymous namespace and would otherwise shadow it.
+using ::texfmt::supported;
 // One level prepared for glTexImage2D, matching Leondore's d3d8webgl prepareLevelUpload:
 // 32-bit is converted BGRA->RGBA; 16-bit uses the native GL packed type (no CPU expand);
 // L8/A8/A8L8 use the GL luminance/alpha formats. `conv` holds any reordered bytes.
