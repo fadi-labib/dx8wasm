@@ -50,7 +50,7 @@ std::atomic<uint32_t> g_write{0};          // next slot to claim; only advances 
 std::atomic<uint32_t> g_read{0};           // consumer cursor; only the consumer stores, producers only load
 std::atomic<uint32_t> g_dropped{0};
 uint32_t              g_seq = 0;           // single-consumer only (drain), so plain uint32_t suffices
-uint32_t              g_lastFlushMs = 0;   // only meaningful once g_everFlushed
+uint64_t              g_lastFlushMs = 0;   // only meaningful once g_everFlushed; widened, see now_ms()
 bool                  g_everFlushed = false;  // not "g_lastFlushMs != 0": 0 is a legal timestamp
 
 void copy_field(char* dst, uint32_t cap, const char* src) {
@@ -135,16 +135,24 @@ void commit(uint32_t slot) {
 // rate limit then latched shut after its first call (t - g_lastFlushMs == 0 <
 // FLUSH_MS on every subsequent frame) and the ring was never flushed again — the
 // whole pipeline silently delivered nothing while looking healthy.
-// performance.now() is thread-relative and stays in range for ~49 days. That
-// per-thread origin is only acceptable because the pump is single-consumer: see
-// the thread-affinity requirement on dx8wasm_tel_pump() in telemetry.h. Call the
-// pump from two threads and this clock's two bases interleave, which makes the
-// rate limit meaningless. (coverage.cpp's own flush clock is read from more than
-// one thread and for that reason deliberately does NOT use this function — it
-// keeps emscripten_get_now() and holds it in a uint64_t.)
-uint32_t now_ms() {
+// performance.now() is thread-relative and stays in range for ~49 days as a
+// double-precision millisecond count, but ~49 days is still a deadline, not a
+// fix — the same saturating float->i32 fptoui that caused this whole task would
+// fire again once thread uptime crossed it, just with a much longer fuse before
+// the pump latched shut permanently. So the cast target is uint64_t here, not
+// uint32_t: casting a double that stays well under 2^63 to a 64-bit integer
+// never approaches the range where wasm's non-trapping fptoui saturates, closing
+// the class rather than deferring it. This does not change the threading story:
+// the value is still a per-thread origin, only acceptable because the pump is
+// single-consumer (see the thread-affinity requirement on dx8wasm_tel_pump() in
+// telemetry.h). Call the pump from two threads and this clock's two bases
+// interleave, which makes the rate limit meaningless regardless of width.
+// (coverage.cpp's own flush clock is read from more than one thread and for
+// that reason deliberately does NOT use this function — it keeps
+// emscripten_get_now() and holds it in a uint64_t of its own.)
+uint64_t now_ms() {
 #ifdef __EMSCRIPTEN__
-    return (uint32_t)emscripten_performance_now();
+    return (uint64_t)emscripten_performance_now();
 #else
     // No browser clock on this path. Return a value that always advances by a full
     // interval so the rate limit degrades to "flush on every call" — which is what
@@ -152,7 +160,7 @@ uint32_t now_ms() {
     // gating on a constant clock is the exact latch this function was fixed for,
     // and reintroducing it here would rot the portability the #else exists for.
     // This is a rate-limiter input, not a timestamp; nothing is measured with it.
-    static uint32_t tick = 0;
+    static uint64_t tick = 0;
     return tick += DX8WASM_TEL_FLUSH_MS;
 #endif
 }
@@ -254,7 +262,7 @@ uint32_t dx8wasm_tel_drain(char* out, uint32_t cap) {
 }
 
 void dx8wasm_tel_pump(void) {
-    const uint32_t t = now_ms();
+    const uint64_t t = now_ms();
     if (g_everFlushed && t - g_lastFlushMs < DX8WASM_TEL_FLUSH_MS) return;
     g_everFlushed = true;
     g_lastFlushMs = t;
