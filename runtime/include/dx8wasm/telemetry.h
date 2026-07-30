@@ -45,6 +45,13 @@ void dx8wasm_tel_span(const char* name, double ms);
 // Serialise queued records as NDJSON into `out` (always NUL-terminated) and remove
 // them from the ring. Returns bytes written, 0 if nothing was queued. Records that
 // do not fit in `cap` stay queued for the next call.
+//
+// `cap` must be large enough to hold at least one serialised record, or drain makes
+// no forward progress: it will keep returning 0 (indistinguishable from "nothing
+// queued") while the un-fitting record sits at the head of the ring forever. A log
+// record with a maximum-length name and detail, every byte of which needs a 6-byte
+// \u00XX escape, serialises to at most ~810 bytes with the current NAME_MAX/
+// DETAIL_MAX — pass a `cap` of 1024 or more to stay clear of that edge.
 uint32_t dx8wasm_tel_drain(char* out, uint32_t cap);
 
 // Drain and hand the NDJSON to the page: calls window.gxTelemetry(text) on the main
