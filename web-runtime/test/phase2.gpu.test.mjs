@@ -30,7 +30,11 @@ const SMOKES = [
   ['texfmt_smoke', [255, 0, 0, 255]],          // 16-bit A4R4G4B4 texture decode (terrain rainbow-noise fix)
   ['draw_smoke', [51, 204, 102, 255]],   // FVF quad, 0xFF33CC66 -> R=51 G=204 B=102
   ['draw_tex_smoke', [128, 128, 64, 255]], // diffuse(.502,1,1) * texel(1,.502,.251) modulate
-  ['coverage_smoke', [1, 1, 1, 4]],        // 1 unhandled RS/TOP/TSS each (+FMT asserted inside), cb 4x
+  // Slots: [rsTopTss (RS+TOP+TSS counters summed, always 1+1+1=3 here), formats (1),
+  // cbCount (4), sawTelemetry (1 — independently asserted; coverage_smoke.cpp fails
+  // loudly via report_error before reaching this tuple if telemetry never fired, so
+  // this slot cannot pass on a false telemetry report by riding another slot's value).
+  ['coverage_smoke', [3, 1, 4, 1]],
   ['caps_query_smoke', [1, 0, 0, 255]],        // capability queries agree with the texture path
   ['honest_stubs_smoke', [1, 0, 0, 255]],      // unimplemented entry points refuse, never lie
   ['telemetry_smoke', [3, 1, 1, 1]],           // ring: 3 lines, span ms exact, post-flood drain exact+dropped>0, fully drained after

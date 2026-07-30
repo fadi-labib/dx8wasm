@@ -2,9 +2,12 @@
 // Drives the 2.5 coverage/fallback layer: feed the device three unhandled tokens
 // (a render state, a texture-stage op, a texture format), then assert the
 // contract counters incremented, the callback fired once per distinct item, and
-// rendering still works. Reports [renderStates, textureOps, formats, cbCount].
+// rendering still works. Reports [rsTopTss, formats, cbCount, sawTelemetry] — see
+// the report_pixel() call below for why the slots are laid out that way.
 #include "d3d8/d3d8.h"
 #include "dx8wasm/contract.h"
+#include "dx8wasm/telemetry.h"
+#include <cstring>
 #include <emscripten.h>
 #include <GLES3/gl3.h>
 
@@ -44,6 +47,13 @@ int main() {
     report_error("coverage counters wrong"); return 1;
   }
 
+  // The coverage layer must also emit telemetry, so a real playthrough's gaps land in
+  // the NDJSON instead of only in counters nobody reads.
+  char tel[4096];
+  dx8wasm_tel_drain(tel, sizeof tel);
+  const int sawTelemetry = strstr(tel, "d3d8.unhandled.render_st") != nullptr ? 1 : 0;
+  if (!sawTelemetry) { report_error("coverage did not emit telemetry"); return 1; }
+
   // Rendering must continue despite the unhandled state — clear and read back.
   dev->Clear(0, nullptr, D3DCLEAR_TARGET, 0xFF3366CCu, 1.0f, 0);
   dev->Present(nullptr, nullptr, nullptr, nullptr);
@@ -51,10 +61,16 @@ int main() {
   glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
   if (px[0] != 51 || px[1] != 102 || px[2] != 204) { report_error("rendering stopped after fallback"); return 1; }
 
-  // Formats are asserted above; the third slot reports the stage-state counter, which is the
-  // one this smoke exists to protect.
-  report_pixel(cov.unhandled_render_states, cov.unhandled_texture_stage_ops,
-               cov.unhandled_texture_stage_states, g_cbCount);
+  // report_pixel() takes exactly four ints but there are five facts to check, so two
+  // that always move together in this smoke (render-state and texture-op counters,
+  // both exactly 1) are folded into slot 1 alongside the stage-state counter as a
+  // sum; that frees a slot for the telemetry check to be independently readable
+  // rather than smuggled into an existing slot where it could hide a false pass.
+  // Slots: [rsTopTss (=3, sum of three always-1 counters), formats (=1), cbCount
+  // (=4), sawTelemetry (=1, independently asserted above so a false telemetry
+  // report cannot hide behind an unrelated slot value)].
+  report_pixel(cov.unhandled_render_states + cov.unhandled_texture_stage_ops + cov.unhandled_texture_stage_states,
+               cov.unhandled_formats, g_cbCount, sawTelemetry);
   if (tex) tex->Release();
   dev->Release(); d3d->Release();
   return 0;
