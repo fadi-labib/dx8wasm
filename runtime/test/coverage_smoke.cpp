@@ -20,6 +20,19 @@ EM_JS(void, report_error, (const char* m), { window.__gpu = { error: UTF8ToStrin
 static int g_cbCount = 0;
 static void on_unhandled(const char*, uint32_t, void*) { g_cbCount++; }
 
+// Counts non-overlapping occurrences of `needle` in `haystack`. Used to assert
+// *uniqueness*, not just presence: a buggy implementation that emits both an
+// uncoalesced "v":1 record and a coalesced "v":3 record for the same key would
+// pass a plain strstr() presence check on "v":3 alone, since that substring
+// would still be found. Requiring the key name itself to appear exactly once
+// closes that gap.
+static int count_occurrences(const char* haystack, const char* needle) {
+  int n = 0;
+  const size_t len = strlen(needle);
+  for (const char* p = strstr(haystack, needle); p; p = strstr(p + len, needle)) ++n;
+  return n;
+}
+
 int main() {
   dx8wasm_set_unhandled_callback(on_unhandled, nullptr);
 
@@ -63,10 +76,17 @@ int main() {
   // exactly one counter record carrying delta 3, or a real playthrough's ring
   // would overrun on the very first busy frame. A pre-coalescing implementation
   // would instead show three separate records each with "v":1 and no "v":3 line.
+  // Checking for exactly one occurrence of the key name (not just presence of
+  // the delta-3 substring) also catches an implementation that emits an extra
+  // uncoalesced delta-1 record alongside a correct delta-3 one — presence of
+  // the delta-3 substring alone would not catch that, since it would still be
+  // found regardless of what else is in the ring.
   char tel[4096];
   dx8wasm_tel_drain(tel, sizeof tel);
+  const char* const kKey = "\"n\":\"d3d8.unhandled.rstate.00000008\"";
+  const int keyOccurrences = count_occurrences(tel, kKey);
   const int sawCoalescedTelemetry =
-      strstr(tel, "\"n\":\"d3d8.unhandled.rstate.00000008\",\"v\":3}") != nullptr ? 1 : 0;
+      (keyOccurrences == 1 && strstr(tel, "\"n\":\"d3d8.unhandled.rstate.00000008\",\"v\":3}") != nullptr) ? 1 : 0;
   if (!sawCoalescedTelemetry) { report_error("coverage telemetry was not coalesced per token"); return 1; }
 
   // Rendering must continue despite the unhandled state — clear and read back.
@@ -76,11 +96,12 @@ int main() {
   glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
   if (px[0] != 51 || px[1] != 102 || px[2] != 204) { report_error("rendering stopped after fallback"); return 1; }
 
-  // report_pixel() takes exactly four ints but there are five facts to check, so two
-  // that always move together in this smoke (render-state, now 3, and texture-op,
-  // always 1) are folded into slot 0 alongside the stage-state counter as a sum;
-  // that frees a slot for the coalescing check to be independently readable
-  // rather than smuggled into an existing slot where it could hide a false pass.
+  // report_pixel() takes exactly four ints but there are five facts to check, so
+  // the render-state (3), texture-op (1) and stage-state (1) counters — each
+  // already asserted individually just above — are folded into slot 0 as a sum
+  // rather than reported separately; that frees a slot for the coalescing check
+  // to be independently readable rather than smuggled into an existing slot
+  // where it could hide a false pass.
   // Slots (0-based): [0] rsTopTss = 3 (render-state) + 1 (texture-op) + 1
   // (stage-state) = 5; [1] formats = 1; [2] cbCount = 4; [3] sawCoalescedTelemetry
   // = 1, independently asserted above (with its own report_error + early return)

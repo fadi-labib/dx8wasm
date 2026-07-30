@@ -66,6 +66,13 @@ typedef struct {
     uint32_t unhandled_texture_stage_states;
 } dx8wasm_coverage;
 
+// Thread-affinity contract: safe to call from any thread, including one other
+// than the D3D8 producer thread (e.g. a main-thread ccall against an Emscripten
+// build with -sPROXY_TO_PTHREAD=1). The counters in `out` are always exact
+// regardless of caller thread. Internally this also flushes a small coalesced
+// telemetry tally; that flush is guarded against the producer thread with a
+// non-blocking atomic_flag, never a mutex, so calling this can never stall the
+// D3D8 thread and never double-emits or drops a telemetry count.
 void dx8wasm_get_coverage(dx8wasm_coverage* out);
 
 // Optional callback: fired the first time each distinct unhandled item is seen.
