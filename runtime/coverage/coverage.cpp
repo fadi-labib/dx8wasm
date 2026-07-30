@@ -8,6 +8,7 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include <emscripten/html5.h>   // emscripten_performance_now — see now_ms()
 #endif
 
 namespace {
@@ -124,9 +125,13 @@ uint32_t g_lastFlushMs = 0;
 // synchronisation to them is out of scope for this change.
 std::atomic_flag g_tallyLock = ATOMIC_FLAG_INIT;
 
+// Not emscripten_get_now(): under -pthread it returns performance.timeOrigin +
+// performance.now() (~1.7e12 ms), which saturates to 0xFFFFFFFF when cast to
+// uint32_t on wasm, pinning this clock to a constant and disabling the time-based
+// tally flush below forever. See the long note on telemetry.cpp's now_ms().
 uint32_t now_ms() {
 #ifdef __EMSCRIPTEN__
-  return (uint32_t)emscripten_get_now();
+  return (uint32_t)emscripten_performance_now();
 #else
   // This SDK's CMakeLists.txt always configures the Emscripten toolchain (see
   // repo root), so this branch is never exercised in a shipped build. Kept, like

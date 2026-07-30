@@ -26,6 +26,7 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include <emscripten/html5.h>   // emscripten_performance_now — see now_ms()
 #endif
 
 namespace {
@@ -49,7 +50,8 @@ std::atomic<uint32_t> g_write{0};          // next slot to claim; only advances 
 std::atomic<uint32_t> g_read{0};           // consumer cursor; only the consumer stores, producers only load
 std::atomic<uint32_t> g_dropped{0};
 uint32_t              g_seq = 0;           // single-consumer only (drain), so plain uint32_t suffices
-uint32_t              g_lastFlushMs = 0;
+uint32_t              g_lastFlushMs = 0;   // only meaningful once g_everFlushed
+bool                  g_everFlushed = false;  // not "g_lastFlushMs != 0": 0 is a legal timestamp
 
 void copy_field(char* dst, uint32_t cap, const char* src) {
     if (!src) { dst[0] = '\0'; return; }
@@ -124,9 +126,21 @@ void commit(uint32_t slot) {
     g_ready[slot % DX8WASM_TEL_CAPACITY].store(1, std::memory_order_release);
 }
 
+// Deliberately NOT emscripten_get_now(). Under -pthread (which every build that
+// uses this ring is, because PROXY_TO_PTHREAD is why the ring exists) emscripten
+// defines emscripten_get_now() as `performance.timeOrigin + performance.now()` —
+// a Unix-epoch millisecond value, ~1.7e12, so pthreads share one time base. That
+// does not fit in uint32_t, and wasm's non-trapping fptoui *saturates* rather
+// than wrapping: the cast returned 0xFFFFFFFF on every call, forever. The pump's
+// rate limit then latched shut after its first call (t - g_lastFlushMs == 0 <
+// FLUSH_MS on every subsequent frame) and the ring was never flushed again — the
+// whole pipeline silently delivered nothing while looking healthy.
+// performance.now() is thread-relative and stays in range for ~49 days; the rate
+// limit only ever compares this clock against itself, on the single consumer
+// thread, so a per-thread origin is all it needs.
 uint32_t now_ms() {
 #ifdef __EMSCRIPTEN__
-    return (uint32_t)emscripten_get_now();
+    return (uint32_t)emscripten_performance_now();
 #else
     return 0;
 #endif
@@ -230,7 +244,8 @@ uint32_t dx8wasm_tel_drain(char* out, uint32_t cap) {
 
 void dx8wasm_tel_pump(void) {
     const uint32_t t = now_ms();
-    if (g_lastFlushMs != 0 && t - g_lastFlushMs < DX8WASM_TEL_FLUSH_MS) return;
+    if (g_everFlushed && t - g_lastFlushMs < DX8WASM_TEL_FLUSH_MS) return;
+    g_everFlushed = true;
     g_lastFlushMs = t;
 
     static char buf[16384];
