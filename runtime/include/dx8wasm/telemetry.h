@@ -57,6 +57,15 @@ uint32_t dx8wasm_tel_drain(char* out, uint32_t cap);
 // Drain and hand the NDJSON to the page: calls window.gxTelemetry(text) on the main
 // thread if that function exists, otherwise writes to stdout. Rate-limited
 // internally to one flush per DX8WASM_TEL_FLUSH_MS; call it every frame.
+//
+// Call this from ONE thread only — the same one every time, the one that owns the
+// GL context (dx8wasm calls it from platform::present()). This is a requirement,
+// not a preference: the rate limit is timed with performance.now(), whose origin is
+// per-thread under -pthread, and the cursor it compares against is a plain
+// non-atomic global. Pumping from a second thread interleaves two unrelated time
+// bases into that one cursor, so the interval becomes arbitrary — it can gate a due
+// flush shut or fire far more often than FLUSH_MS. The producers
+// (dx8wasm_tel_log/counter/span) have no such restriction; only the pump does.
 void dx8wasm_tel_pump(void);
 #define DX8WASM_TEL_FLUSH_MS 1000
 

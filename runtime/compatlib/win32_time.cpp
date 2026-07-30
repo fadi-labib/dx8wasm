@@ -9,8 +9,17 @@
 
 extern "C" {
 
-DWORD timeGetTime(void) { return (DWORD)emscripten_get_now(); }
-DWORD GetTickCount(void) { return (DWORD)emscripten_get_now(); }
+// Both of these are 32-bit tick counts that the real Win32 API wraps every ~49.7
+// days, and callers are written for that. Getting there needs the double widened to
+// a 64-bit integer FIRST and only then truncated: casting the double straight to
+// DWORD is a float->i32 conversion, and under -pthread emscripten_get_now() is
+// performance.timeOrigin + performance.now() (~1.7e12 ms), far outside uint32_t's
+// range. wasm's non-trapping fptoui saturates rather than wrapping, so the direct
+// cast returned a constant 0xFFFFFFFF — a frozen clock, which silently breaks every
+// caller that paces or times out on it. Widen, then wrap. (Same defect as the one
+// fixed in telemetry.cpp/coverage.cpp; scripts/check.sh guards the pattern now.)
+DWORD timeGetTime(void) { return (DWORD)(uint64_t)emscripten_get_now(); }
+DWORD GetTickCount(void) { return (DWORD)(uint64_t)emscripten_get_now(); }
 
 BOOL QueryPerformanceFrequency(LARGE_INTEGER* freq) {
   if (!freq) return 0;

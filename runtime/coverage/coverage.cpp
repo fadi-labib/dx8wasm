@@ -8,7 +8,6 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
-#include <emscripten/html5.h>   // emscripten_performance_now — see now_ms()
 #endif
 
 namespace {
@@ -105,7 +104,13 @@ struct TallyEntry {
 };
 TallyEntry g_tally[kTallyCapacity];
 int g_tallyUsed = 0;
-uint32_t g_lastFlushMs = 0;
+uint64_t g_lastFlushMs = 0;   // only meaningful once g_clockSeeded; see now_ms()
+bool g_clockSeeded = false;   // not "g_lastFlushMs == 0": 0 is a legal timestamp
+                              // (a thread's first sub-millisecond, and always on
+                              // the non-Emscripten path), so overloading it as
+                              // "never stamped" is the latent trap telemetry.cpp's
+                              // g_everFlushed removed. Same defect class, so the
+                              // same hardening here rather than only there.
 
 // Guards g_tally/g_tallyUsed/g_lastFlushMs against the one cross-thread edge this
 // file has: note() (and therefore tally_record()) only ever runs on the D3D8
@@ -125,22 +130,39 @@ uint32_t g_lastFlushMs = 0;
 // synchronisation to them is out of scope for this change.
 std::atomic_flag g_tallyLock = ATOMIC_FLAG_INIT;
 
-// Not emscripten_get_now(): under -pthread it returns performance.timeOrigin +
-// performance.now() (~1.7e12 ms), which saturates to 0xFFFFFFFF when cast to
-// uint32_t on wasm, pinning this clock to a constant and disabling the time-based
-// tally flush below forever. See the long note on telemetry.cpp's now_ms().
-uint32_t now_ms() {
+// The defect fixed here was the *truncation*, not the function. `(uint32_t)
+// emscripten_get_now()` saturated to 0xFFFFFFFF (under -pthread that call is
+// performance.timeOrigin + performance.now(), ~1.7e12 ms, and wasm's non-trapping
+// fptoui saturates rather than wraps), pinning this clock to a constant and
+// disabling the time-based tally flush below forever — the same failure as
+// telemetry.cpp's pump. So: keep emscripten_get_now(), widen the result.
+//
+// Deliberately NOT telemetry.cpp's fix (emscripten_performance_now()), because
+// this clock is not single-threaded the way the pump is. g_lastFlushMs is stamped
+// by flush_tally_locked(), which dx8wasm_get_coverage() reaches from ANY thread
+// (contract.h; and see the g_tallyLock note above — a main-thread ccall really
+// does run concurrently with the engine worker under PROXY_TO_PTHREAD), while the
+// comparison happens on the producer thread. performance.now() has a per-thread
+// origin, so mixing the two bases in one cursor would make a producer compare its
+// own smaller value against a main-thread stamp, underflow the unsigned subtract
+// to a huge number, and force a flush on the very next token. Not a correctness
+// bug — it cannot fabricate or lose counts, and it self-heals after one
+// producer-side flush — but it would defeat coalescing precisely when a reader
+// polls, adding the ring pressure the tally exists to avoid. timeOrigin +
+// performance.now() is the same base on every thread, which is exactly what a
+// cursor shared across threads needs.
+uint64_t now_ms() {
 #ifdef __EMSCRIPTEN__
-  return (uint32_t)emscripten_performance_now();
+  return (uint64_t)emscripten_get_now();
 #else
   // This SDK's CMakeLists.txt always configures the Emscripten toolchain (see
   // repo root), so this branch is never exercised in a shipped build. Kept, like
   // telemetry.cpp's own now_ms(), so the file stays self-contained rather than
-  // hard-depending on <emscripten.h>; because it always returns 0 here, the
-  // "seed the clock" branch in tally_record() runs on every call and the time
-  // trigger can structurally never fire — that is inert dead code on this path,
+  // hard-depending on <emscripten.h>. It returns a constant, so the time trigger
+  // in tally_record() can structurally never fire on this path — inert dead code,
   // not a half-implemented feature, precisely because a non-Emscripten build of
-  // this SDK does not exist.
+  // this SDK does not exist. The tally still flushes on capacity, so nothing is
+  // lost even here.
   return 0;
 #endif
 }
@@ -168,6 +190,9 @@ void flush_tally_locked() {
   }
   g_tallyUsed = 0;
   g_lastFlushMs = now_ms();
+  g_clockSeeded = true;   // this IS a stamp; without it a get_coverage()-driven flush
+                          // that lands before the first tally_record() would be thrown
+                          // away by that call's seeding branch.
 }
 
 // Non-blocking, callable from any thread: tries to acquire g_tallyLock and
@@ -212,8 +237,9 @@ void tally_record(Family fam, uint32_t value) {
   // process has seen — flushing immediately would split a burst that starts at
   // process start into many single-occurrence records, defeating coalescing for
   // exactly the case that matters most. So the first call only seeds the clock.
-  const uint32_t t = now_ms();
-  if (g_lastFlushMs == 0) {
+  const uint64_t t = now_ms();
+  if (!g_clockSeeded) {
+    g_clockSeeded = true;
     g_lastFlushMs = t;
   } else if (t - g_lastFlushMs >= DX8WASM_TEL_FLUSH_MS) {
     flush_tally_locked();

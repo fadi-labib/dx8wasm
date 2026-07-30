@@ -135,14 +135,25 @@ void commit(uint32_t slot) {
 // rate limit then latched shut after its first call (t - g_lastFlushMs == 0 <
 // FLUSH_MS on every subsequent frame) and the ring was never flushed again — the
 // whole pipeline silently delivered nothing while looking healthy.
-// performance.now() is thread-relative and stays in range for ~49 days; the rate
-// limit only ever compares this clock against itself, on the single consumer
-// thread, so a per-thread origin is all it needs.
+// performance.now() is thread-relative and stays in range for ~49 days. That
+// per-thread origin is only acceptable because the pump is single-consumer: see
+// the thread-affinity requirement on dx8wasm_tel_pump() in telemetry.h. Call the
+// pump from two threads and this clock's two bases interleave, which makes the
+// rate limit meaningless. (coverage.cpp's own flush clock is read from more than
+// one thread and for that reason deliberately does NOT use this function — it
+// keeps emscripten_get_now() and holds it in a uint64_t.)
 uint32_t now_ms() {
 #ifdef __EMSCRIPTEN__
     return (uint32_t)emscripten_performance_now();
 #else
-    return 0;
+    // No browser clock on this path. Return a value that always advances by a full
+    // interval so the rate limit degrades to "flush on every call" — which is what
+    // this path has always done, stdout being its sink. It must not be a constant:
+    // gating on a constant clock is the exact latch this function was fixed for,
+    // and reintroducing it here would rot the portability the #else exists for.
+    // This is a rate-limiter input, not a timestamp; nothing is measured with it.
+    static uint32_t tick = 0;
+    return tick += DX8WASM_TEL_FLUSH_MS;
 #endif
 }
 
