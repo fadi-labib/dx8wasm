@@ -30,7 +30,8 @@ set_target_properties(platform_smoke PROPERTIES SUFFIX ".js")
 
 add_library(dx8_d3d8webgl STATIC
   runtime/d3d8webgl/d3d8.cpp runtime/d3d8webgl/device.cpp
-  runtime/graphics-ff/ff_shader.cpp runtime/coverage/coverage.cpp runtime/runtime.cpp)
+  runtime/graphics-ff/ff_shader.cpp runtime/coverage/coverage.cpp runtime/runtime.cpp
+  runtime/telemetry/telemetry.cpp)
 target_include_directories(dx8_d3d8webgl PUBLIC runtime runtime/d3d8 runtime/include)
 target_link_libraries(dx8_d3d8webgl PUBLIC dx8_platform)
 target_compile_options(dx8_d3d8webgl PRIVATE ${DX8_SDL3})
@@ -52,6 +53,12 @@ target_include_directories(caps_query_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(caps_query_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(caps_query_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(caps_query_smoke PROPERTIES SUFFIX ".js")
+
+add_executable(telemetry_smoke runtime/test/telemetry_smoke.cpp)
+target_include_directories(telemetry_smoke PRIVATE runtime runtime/d3d8)
+target_link_libraries(telemetry_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(telemetry_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(telemetry_smoke PROPERTIES SUFFIX ".js")
 
 add_executable(abi_smoke runtime/test/abi_smoke.cpp)
 target_include_directories(abi_smoke PRIVATE runtime runtime/d3d8)
