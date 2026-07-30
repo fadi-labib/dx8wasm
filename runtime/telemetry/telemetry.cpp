@@ -9,6 +9,11 @@
 // slot is claimed it belongs exclusively to that producer, which fills the fields
 // and then release-publishes a per-slot ready flag; the consumer only reads a slot
 // after acquiring that flag, so it can never observe a partially-written record.
+// The handshake is symmetric on the way back: recycling a slot (clearing its ready
+// flag and advancing g_read) is also a release, paired with an acquire load of
+// g_read in claim() — a producer must not overwrite a slot's fields until it can
+// see that the consumer has finished reading them, or the same race reappears on
+// the other edge.
 // A full ring drops the record and bumps g_dropped — bounded memory is worth more
 // here than completeness, because the alternative (grow, or block the engine
 // thread) perturbs the very frame times this exists to measure.
@@ -61,7 +66,7 @@ void copy_field(char* dst, uint32_t cap, const char* src) {
 void json_escape(char* dst, size_t dstCap, const char* src) {
     size_t o = 0;
     if (!src) src = "";
-    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(src); *p && o + 7 < dstCap; ++p) {
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(src); *p && o + 7 <= dstCap; ++p) {
         const unsigned char c = *p;
         switch (c) {
             case '"':  dst[o++] = '\\'; dst[o++] = '"';  break;
@@ -86,7 +91,12 @@ void json_escape(char* dst, size_t dstCap, const char* src) {
 Record* claim(uint8_t kind, const char* name, uint32_t* outSlot) {
     uint32_t write = g_write.load(std::memory_order_relaxed);
     for (;;) {
-        const uint32_t read = g_read.load(std::memory_order_relaxed);
+        // Acquire: paired with the release store on the consumer's recycle edge
+        // (dx8wasm_tel_drain, both the success and the n<=0 drop path). Without this,
+        // a producer reusing a recycled slot could race the consumer's just-finished
+        // (non-atomic) read of that same slot's previous contents — the same class of
+        // bug as an unpublished write, just on the other edge of the handshake.
+        const uint32_t read = g_read.load(std::memory_order_acquire);
         if (write - read >= DX8WASM_TEL_CAPACITY) {   // unsigned wrap-safe distance
             g_dropped.fetch_add(1, std::memory_order_relaxed);
             return nullptr;
@@ -196,7 +206,10 @@ uint32_t dx8wasm_tel_drain(char* out, uint32_t cap) {
             // one must too, or an overflow could look smaller than it really was.
             g_dropped.fetch_add(1, std::memory_order_relaxed);
             g_ready[idx].store(0, std::memory_order_relaxed);
-            g_read.store(read + 1, std::memory_order_relaxed);
+            // Release: paired with the acquire load in claim(). Recycling a slot is a
+            // handshake just like publishing one — a producer must not reuse it until
+            // it can see that the consumer is done reading it.
+            g_read.store(read + 1, std::memory_order_release);
             continue;
         }
         if (used + (uint32_t)n + 1 > cap) break;   // doesn't fit — leave it queued, seq NOT spent
@@ -206,7 +219,11 @@ uint32_t dx8wasm_tel_drain(char* out, uint32_t cap) {
         out[used] = '\0';
         g_seq++;   // only now, once the record is actually in `out`, is the seq spent
         g_ready[idx].store(0, std::memory_order_relaxed);
-        g_read.store(read + 1, std::memory_order_relaxed);
+        // Release: same recycle handshake as the drop path above — a producer that
+        // later reclaims this slot must see this store (and everything before it,
+        // including this drain's own reads of g_ring[idx]) before it can overwrite
+        // the slot's fields.
+        g_read.store(read + 1, std::memory_order_release);
     }
     return used;
 }
