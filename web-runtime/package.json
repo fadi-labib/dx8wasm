@@ -5,7 +5,7 @@
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
-    "test": "node test/gaxd.test.mjs && node test/loader.browser.test.mjs && node test/onboard.browser.test.mjs"
+    "test": "node test/gaxd.test.mjs && node test/loader.browser.test.mjs && node test/onboard.browser.test.mjs && node test/otel.test.mjs"
   },
   "devDependencies": {
     "brotli-wasm": "^3.0.1",
