@@ -18,10 +18,21 @@ export function reduce(lines) {
     if (!text) continue;
     let rec;
     try { rec = JSON.parse(text); } catch { malformed++; continue; }
-    if (rec.k === 'counter') counters[rec.n] = (counters[rec.n] || 0) + (rec.v || 0);
-    else if (rec.k === 'span') spans.push({ name: rec.n, ms: rec.ms, seq: rec.seq });
-    else if (rec.k === 'log') logs.push({ name: rec.n, detail: rec.d ?? '' });
-    else malformed++; // parsed fine, but an unrecognized `k` means producer/reducer disagree
+    // A record that claims a kind but lacks (or misdefines) that kind's required
+    // field is structurally-valid JSON but semantically broken — it must count as
+    // malformed rather than flow through and quietly poison an aggregate (a NaN
+    // `ms` would otherwise turn a whole span-key's summary into NaN with no trace
+    // of why). `0` is a legitimate counter delta and is accepted, not defaulted —
+    // only a missing/non-numeric `v` is treated as malformed.
+    if (rec.k === 'counter') {
+      if (typeof rec.v !== 'number' || Number.isNaN(rec.v)) { malformed++; continue; }
+      counters[rec.n] = (counters[rec.n] || 0) + rec.v;
+    } else if (rec.k === 'span') {
+      if (typeof rec.ms !== 'number' || Number.isNaN(rec.ms)) { malformed++; continue; }
+      spans.push({ name: rec.n, ms: rec.ms, seq: rec.seq });
+    } else if (rec.k === 'log') {
+      logs.push({ name: rec.n, detail: rec.d ?? '' });
+    } else malformed++; // parsed fine, but an unrecognized `k` means producer/reducer disagree
   }
   // Per-name span statistics — this is what the perf work reads. Field names are a
   // contract: count/total/max/mean, do not rename.
