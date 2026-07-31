@@ -7,7 +7,19 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(DX8_WEBGL_LINK -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sEXIT_RUNTIME=0 -g0)
+# -sEXPORTED_RUNTIME_METHODS=UTF8ToString: every smoke's report_error() EM_JS
+# helper reads its C-string argument via UTF8ToString, which is not in
+# Emscripten's default export set. Whether that reference resolves without this
+# flag depends on incidental dead-code retention (another EM_JS/GL/SDL call site
+# in the same binary keeping the internal helper alive) — true for most of these
+# targets today, but not guaranteed, and already false for telemetry_smoke and
+# compat_d3dx_smoke: their report_error() throws `ReferenceError: UTF8ToString is
+# not defined` on the one path that matters, the failure path, which is exactly
+# the path that never gets exercised by a passing run. Exporting it here, once,
+# for every target that links against this variable, makes every smoke's
+# failure-reporting path actually reportable instead of accidentally so.
+set(DX8_WEBGL_LINK -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sEXIT_RUNTIME=0 -g0
+    -sEXPORTED_RUNTIME_METHODS=UTF8ToString)
 
 add_executable(gl_smoke runtime/test/gl_smoke.cpp)
 target_link_options(gl_smoke PRIVATE ${DX8_WEBGL_LINK})
@@ -57,11 +69,7 @@ set_target_properties(caps_query_smoke PROPERTIES SUFFIX ".js")
 add_executable(telemetry_smoke runtime/test/telemetry_smoke.cpp)
 target_include_directories(telemetry_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(telemetry_smoke PRIVATE dx8_d3d8webgl)
-target_link_options(telemetry_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3}
-    -sEXPORTED_RUNTIME_METHODS=UTF8ToString)  # its report_error() needs this to read the C string; not
-                                               # in the default export set, and no prior failure here ever
-                                               # called it, so the gap was latent until this smoke's new
-                                               # hard-failure assertions actually exercise that path.
+target_link_options(telemetry_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(telemetry_smoke PROPERTIES SUFFIX ".js")
 
 add_executable(abi_smoke runtime/test/abi_smoke.cpp)
