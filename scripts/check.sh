@@ -82,35 +82,47 @@ badcast_c="\\(([[:space:]]*($badtype)[[:space:]]*)\\)[[:space:]]*\\(?[[:space:]]
 # `static_cast<uint32_t>((emscripten_get_now()))` is caught too.
 badcast_static="static_cast[[:space:]]*<[[:space:]]*($badtype)[[:space:]]*>[[:space:]]*\\([[:space:]]*\\(?[[:space:]]*($badfunc)"
 badcast="($badcast_c)|($badcast_static)"
-# Drop lines that are ENTIRELY comment before matching, so prose on its own line can
-# never trip this check — see the HAZARD note above. This is deliberately NOT a
-# character-by-character lexer: an earlier version of this check tracked /* */ and //
-# with an `incomment` flag carried across lines, then grew double-quote tracking to
-# stop that flag latching on a "/*" inside a string literal (e.g.
-# FindFirstFile("/dir/*.txt", ...) in runtime/test/compat_file_smoke.cpp). That in turn
-# desynchronised on a single-quote char literal containing a double quote — e.g.
-# `case '"': ... break;` in runtime/telemetry/telemetry.cpp — because the tracker only
-# looked at raw '"' with no notion of being inside '...'. Each fix for a lexer gap
-# opened a narrower one one level down (char literals, and beyond that GCC multichar
-# literals like '/*'); that recursion does not terminate at a defensible place in awk.
-# So: stop approximating a C++ tokenizer. A line is stripped only if its first
-# non-whitespace characters are "//", "/*", or "*" (the block-comment continuation
-# style used throughout this codebase) — a rule with NO state carried between lines,
-# so nothing can desynchronise across a file.
-#   - Whole-line comments (the realistic case — see coverage.cpp's now_ms() comment
-#     below) are stripped and can never trip a false FAIL.
+# Drop lines that are ENTIRELY a "//" comment before matching, so prose on its own
+# line can never trip this check — see the HAZARD note above. This has gone through
+# three shapes, each one narrowed because the previous one had a real miss:
+#   1. A character-by-character /* */ + // scanner with an `incomment` flag carried
+#      across lines. Latched on forever once a "/*" inside a string literal (e.g.
+#      FindFirstFile("/dir/*.txt", ...) in runtime/test/compat_file_smoke.cpp) opened
+#      it with no matching "*/" — silently dropped every later line in that file.
+#   2. Added double-quote tracking to fix that — then desynchronised on a bare `"`
+#      inside a single-quote char literal (`case '"': ... break;` in
+#      runtime/telemetry/telemetry.cpp), which the quote tracker can't tell apart
+#      from a real string open.
+#   3. Replaced both with a stateless rule stripping any line whose first non-blank
+#      characters were "//", "/*", or "*" — no cross-line state, so nothing could
+#      desynchronise. But "/*" and "*" are each unsafe on their OWN line: `*ptr =
+#      (uint32_t)emscripten_get_now();` starts with "*" as a pointer dereference, not
+#      a comment continuation, and got silently stripped whole — a MISS. Likewise
+#      `/* note */ uint32_t x = (uint32_t)emscripten_get_now();` starts with "/*" but
+#      the comment closes mid-line with live code after it — also silently stripped
+#      whole, also a MISS. Both are ordinary C++, not contrived shapes.
+# The rule below strips a line ONLY if its first non-whitespace characters are "//".
+# This is the only token in C++ that is safe to key on, and the safety is checkable
+# in one step rather than asserted: everything after "//" to end-of-line is a
+# comment, and only whitespace precedes it on a "//"-leading line, so such a line
+# contains no code — full stop, no case analysis, no state. Contrast the two
+# dropped forms: "/*" is unsafe because a block comment can CLOSE mid-line and be
+# followed by code; "*" is unsafe because it is also the dereference/multiply
+# operator, i.e. it can OPEN a line of pure code.
+# Residual false-FAIL surface, now precisely two shapes, both self-announcing and
+# safe to leave (a miss would not be):
+#   - Prose inside a /* ... */ block comment whose interior lines do NOT start with
+#     "//" (e.g. a plain-text line inside a block comment) can still match. Fix by
+#     rewording, or by writing the comment as "//" lines instead.
 #   - A pattern inside a TRAILING comment on a code line (`foo(); // (uint32_t)
-#     emscripten_get_now()`) is NOT stripped and would still match. That is a false
-#     POSITIVE, and it is the correct direction to err in: it is self-announcing (a
-#     FAIL naming the exact line), cheap to dismiss in a minute, and never hides a real
-#     offending cast the way the old stateful stripper's false negative did.
-# This is strictly weaker than a real tokenizer and strictly SAFER: its only failure
-# mode is over-reporting, never a silent miss. Known residual false-FAIL surface:
-# trailing comments containing the pattern (accepted, not attempted here — same
-# "known residual gaps" bucket as the two-step assignment and implicit-narrowing forms
-# below, which this check cannot see for a different reason: no cast token at all).
+#     emscripten_get_now()`) still matches.
+# Both are false POSITIVES: self-announcing, a FAIL naming the line, fixed in a
+# minute — never a silent miss. Known residual gaps unrelated to comments, because
+# they have no cast token for a line-based regex to anchor on at all: the two-step
+# form `double t = emscripten_get_now(); uint32_t u = t;`, and implicit narrowing on
+# assignment/return.
 strip_comments() {
-  awk '{ line = $0; sub(/^[[:space:]]*/, "", line); if (line !~ /^(\/\/|\/\*|\*)/) print NR ":" $0 }' "$1"
+  awk '{ line = $0; sub(/^[[:space:]]*/, "", line); if (line !~ /^\/\//) print NR ":" $0 }' "$1"
 }
 while IFS= read -r f; do
   case "$f" in build/*|*/build/*|node_modules/*|.superpowers/*|scripts/check.sh) continue ;; esac
