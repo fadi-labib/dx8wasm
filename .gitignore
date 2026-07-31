@@ -13,4 +13,3 @@ node_modules/
 __pycache__/
 *.pyc
 .remember/
-web-runtime/_*.mjs
