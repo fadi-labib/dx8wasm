@@ -90,7 +90,7 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - Deliverable: a conformance matrix (which D3D8 states/ops are covered) built against that target.
 
 ## Phase 4 — CI & tests
-- ✅ **CI harness done:** `scripts/check.sh` (mechanical guardrails: SPDX headers, commit-authorship, no saturating 32-bit casts of `emscripten_get_now()`) + `scripts/ci.sh` (guardrails + pinned-toolchain check + the full test suite, ~30 smokes across the d3d8webgl/compatlib/telemetry surface) + `.github/workflows/ci.yml`, which just invokes `ci.sh`. Runs locally today; the workflow goes live once this repo has a remote.
+- ✅ **CI harness done:** `scripts/check.sh` (mechanical guardrails: SPDX headers, commit-authorship, no saturating 32-bit casts of `emscripten_get_now()`) + `scripts/ci.sh` (guardrails + pinned-toolchain check + the full test suite, 31 smokes across the d3d8webgl/compatlib/telemetry surface — every `CMakeLists.txt` executable target except `conformance`, `minigame`, and `spin_demo`) + `.github/workflows/ci.yml`, which just invokes `ci.sh`. Runs locally today; the workflow goes live once this repo has a remote.
 - ✅ **Emscripten pinned:** `.emscripten-version` (6.0.2) is checked by `ci.sh` against the live toolchain; the `wasm-opt`/`-g` DWARF workaround is documented in `cmake/`.
 - Remaining: determinism harness stub (for games with replays).
 
