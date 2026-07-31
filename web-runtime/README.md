@@ -4,6 +4,13 @@ Game-agnostic browser harness: decode a GAXD archive, stream it in, cache it in
 OPFS, under cross-origin isolation. (Multiplayer/lobby/signaling from the
 reference is out of scope here — that belongs to a consuming game.)
 
+Nothing in this directory may depend on a specific game. Everything here runs standalone
+with `npm test` and touches no path outside this repo. Game-coupled test harnesses (ones that
+`spawn('node', ['scripts/serve-game.mjs'])` or otherwise reach into a consuming game's build
+output) belong in that game's own repo, not here — see e.g.
+[`generals-dx8wasm/web-runtime/`](../../generals-dx8wasm/web-runtime/README.md), which adopted
+this repo's Generals-specific harnesses on 2026-07-31 for exactly that reason.
+
 ## Status
 
 | Piece | State |
