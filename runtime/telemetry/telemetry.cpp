@@ -52,6 +52,7 @@ std::atomic<uint32_t> g_dropped{0};
 uint32_t              g_seq = 0;           // single-consumer only (drain), so plain uint32_t suffices
 uint64_t              g_lastFlushMs = 0;   // only meaningful once g_everFlushed; widened, see now_ms()
 bool                  g_everFlushed = false;  // not "g_lastFlushMs != 0": 0 is a legal timestamp
+uint32_t              g_lastReportedDropped = 0;  // single-consumer only (pump), see dx8wasm_tel_pump()
 
 void copy_field(char* dst, uint32_t cap, const char* src) {
     if (!src) { dst[0] = '\0'; return; }
@@ -266,6 +267,28 @@ void dx8wasm_tel_pump(void) {
     if (g_everFlushed && t - g_lastFlushMs < DX8WASM_TEL_FLUSH_MS) return;
     g_everFlushed = true;
     g_lastFlushMs = t;
+
+    // Surface our own data loss into the stream, before draining, so it goes out
+    // in this same flush rather than lagging a second behind. Emitted as a delta
+    // since the last report, not the running total: the reducer
+    // (web-runtime/otel/ndjson-to-otel.mjs) sums counter values by key, so
+    // re-emitting the cumulative total every flush would sum to a meaningless
+    // triangular number. Nothing is appended when the delta is zero, so a quiet
+    // run produces zero "tel.dropped" records rather than a stream of noisy
+    // zeroes — see the key's documentation in telemetry.h.
+    const uint32_t dropped = g_dropped.load(std::memory_order_relaxed);
+    const uint32_t delta = dropped - g_lastReportedDropped;  // unsigned, wrap-safe
+    if (delta != 0) {
+        // Record the report before appending: if the ring is full right now, this
+        // single append attempt is itself dropped (bumping g_dropped again), but
+        // because g_lastReportedDropped is already advanced to `dropped`, that
+        // extra loss becomes next flush's delta rather than being folded into
+        // this one or retried here. So this can neither recurse nor loop — it is
+        // exactly one append, and a self-drop is simply reported one flush later,
+        // same as any other drop.
+        g_lastReportedDropped = dropped;
+        dx8wasm_tel_counter("tel.dropped", delta);
+    }
 
     static char buf[16384];
     const uint32_t n = dx8wasm_tel_drain(buf, sizeof buf);

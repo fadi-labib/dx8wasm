@@ -73,6 +73,19 @@ void dx8wasm_tel_pump(void);
 // telemetry itself lost data — treat it as a failed measurement, not a warning.
 uint32_t dx8wasm_tel_dropped(void);
 
+// dx8wasm_tel_pump() also surfaces dx8wasm_tel_dropped() into the NDJSON stream
+// itself, as a counter record under the key "tel.dropped" — so a consumer that
+// only ever sees the stream (not the C++ API) can still tell whether it lost
+// data. Each flush emits the *delta* since the last report, not the running
+// total (the standard reducer sums counter values by key, so a total would sum
+// to a meaningless triangular number across flushes); a flush with no new drops
+// emits no "tel.dropped" record at all. Any consumer of this stream — in
+// particular a determinism/replay gate that asserts on the absence of some
+// other record — must additionally assert it never sees a nonzero "tel.dropped"
+// value, or it cannot distinguish "nothing happened" from "the record was
+// lost". A nonzero value invalidates the measurement window it falls in; it is
+// not a warning to note alongside the result.
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

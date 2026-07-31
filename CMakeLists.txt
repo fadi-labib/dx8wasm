@@ -57,7 +57,11 @@ set_target_properties(caps_query_smoke PROPERTIES SUFFIX ".js")
 add_executable(telemetry_smoke runtime/test/telemetry_smoke.cpp)
 target_include_directories(telemetry_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(telemetry_smoke PRIVATE dx8_d3d8webgl)
-target_link_options(telemetry_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+target_link_options(telemetry_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3}
+    -sEXPORTED_RUNTIME_METHODS=UTF8ToString)  # its report_error() needs this to read the C string; not
+                                               # in the default export set, and no prior failure here ever
+                                               # called it, so the gap was latent until this smoke's new
+                                               # hard-failure assertions actually exercise that path.
 set_target_properties(telemetry_smoke PROPERTIES SUFFIX ".js")
 
 add_executable(abi_smoke runtime/test/abi_smoke.cpp)
