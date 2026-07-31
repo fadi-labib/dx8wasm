@@ -78,27 +78,51 @@ badfunc='emscripten_get_now|emscripten_performance_now'
 # C-style cast, allowing one extra "(" between the cast and the call so
 # `(uint32_t)(emscripten_get_now())` is still caught.
 badcast_c="\\(([[:space:]]*($badtype)[[:space:]]*)\\)[[:space:]]*\\(?[[:space:]]*($badfunc)"
-# static_cast<T>(...)
-badcast_static="static_cast[[:space:]]*<[[:space:]]*($badtype)[[:space:]]*>[[:space:]]*\\([[:space:]]*($badfunc)"
+# static_cast<T>(...), same extra-paren tolerance as the C-style cast above so
+# `static_cast<uint32_t>((emscripten_get_now()))` is caught too.
+badcast_static="static_cast[[:space:]]*<[[:space:]]*($badtype)[[:space:]]*>[[:space:]]*\\([[:space:]]*\\(?[[:space:]]*($badfunc)"
 badcast="($badcast_c)|($badcast_static)"
 # Strip // line comments and /* */ block comments before matching, so prose can never
-# trip (or hide from) this check — see the HAZARD note above. Deliberately not a real
-# preprocessor: it does not understand string/char literals, which is an acceptable
-# heuristic gap for a guardrail whose false-positive failure mode is "check the line
-# it names", not a silent miss.
+# trip (or hide from) this check — see the HAZARD note above. This DOES track
+# double-quoted string literals (with backslash-escape handling), because a naive
+# scanner that doesn't is worse than no stripper at all: a string literal containing
+# "/*" (e.g. FindFirstFile("/dir/*.txt", ...) in runtime/test/compat_file_smoke.cpp)
+# would flip `incomment` on with no matching "*/", silently swallowing every
+# subsequent line of the file from matching — a false NEGATIVE (a real offending cast
+# further down goes unreported), which is strictly worse than the false POSITIVE
+# (prose tripping the check) this stripping was added to fix. Single-quote char
+# literals are deliberately NOT tracked: a C++ char literal cannot itself contain the
+# two-character sequences "/*" or "//" (that would need more than one char between the
+# quotes), so there is nothing for one to hide. Multi-line strings via a trailing
+# backslash-newline are not modelled (a single-quoted-per-line heuristic is an
+# accepted gap, not a silent one — see the file-header hazard note for the general
+# stance on this check's limits).
 strip_comments() {
   awk '
     BEGIN { incomment = 0 }
     {
-      line = $0; out = ""; i = 1; n = length(line)
+      line = $0; out = ""; i = 1; n = length(line); inquote = 0
       while (i <= n) {
+        c = substr(line, i, 1)
+        c2 = substr(line, i, 2)
         if (incomment) {
-          if (substr(line, i, 2) == "*/") { incomment = 0; i += 2 } else { i++ }
+          if (c2 == "*/") { incomment = 0; i += 2 } else { i++ }
           continue
         }
-        if (substr(line, i, 2) == "/*") { incomment = 1; i += 2; continue }
-        if (substr(line, i, 2) == "//") { break }
-        out = out substr(line, i, 1)
+        if (inquote) {
+          out = out c
+          if (c == "\\") {
+            if (i + 1 <= n) { out = out substr(line, i + 1, 1); i += 2 } else { i++ }
+            continue
+          }
+          if (c == "\"") { inquote = 0 }
+          i++
+          continue
+        }
+        if (c == "\"") { inquote = 1; out = out c; i++; continue }
+        if (c2 == "/*") { incomment = 1; i += 2; continue }
+        if (c2 == "//") { break }
+        out = out c
         i++
       }
       print NR ":" out
