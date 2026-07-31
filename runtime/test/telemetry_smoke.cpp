@@ -8,10 +8,14 @@
 // Also drives dx8wasm_tel_pump()'s "tel.dropped" self-report: after the flood
 // above, pumping must hand the page an NDJSON counter record naming the exact
 // drop count, in the same flush as the flood's own records; a second pump with
-// no further drops must add nothing. Both checks report via report_error (an
-// exact string compare in the harness) rather than folding into the pixel
-// tuple below: the harness accepts pixel components within +-2 of expected, so
-// a 0-vs-1 boolean baked into a tuple slot could pass by that tolerance alone
+// no further drops must add nothing. Also constructs the case where the ring
+// is still completely full at the exact moment the tel.dropped report itself
+// tries to append (its own append is then dropped too) and asserts the true
+// total eventually surfaces rather than being permanently swallowed by the
+// self-drop. All three checks report via report_error (an exact string
+// compare in the harness) rather than folding into the pixel tuple below: the
+// harness accepts pixel components within +-2 of expected, so a small-integer
+// or 0-vs-1 value baked into a tuple slot could pass by that tolerance alone
 // without actually exercising the assertion.
 // Reports [linesDrained, sawSpanMs, postFloodExactAndDropped, fullyDrainedAfter].
 #include "dx8wasm/telemetry.h"
@@ -142,6 +146,65 @@ int main() {
   dx8wasm_tel_pump();
   if (!tel_capture_is_empty()) {
     report_error("pump re-emitted tel.dropped (or something) with no new drops since the last report");
+    return 1;
+  }
+
+  // --- tel.dropped's self-drop path: the ring is full at the exact moment the
+  // report itself tries to append. This is the case the whole feature exists
+  // to cover, and it needs its own deterministic setup: the append inside
+  // dx8wasm_tel_pump() must find zero free slots.
+  //
+  // Guarantee an empty ring first (independent of anything above).
+  {
+    char drainAll[512];
+    while (dx8wasm_tel_drain(drainAll, sizeof drainAll) != 0) {}
+  }
+
+  // Fill the ring to exactly capacity, then push one more: that one claim fails
+  // (ring full), bumping g_dropped by 1. At this instant nothing has been
+  // drained, so the ring is still completely full of "filler" records.
+  for (int i = 0; i < DX8WASM_TEL_CAPACITY; i++) dx8wasm_tel_counter("filler", 1);
+  dx8wasm_tel_counter("trigger_drop", 1);   // ring full: this claim fails, g_dropped += 1
+
+  // Pump while the ring is still full. dx8wasm_tel_pump()'s own tel.dropped
+  // append attempt claims a slot in that same full ring, so it is itself
+  // dropped (g_dropped grows by 1 more here) and nothing is queued for this
+  // flush. The drain that follows inside this same pump call empties part of
+  // the backlog (buf is smaller than the full backlog), freeing room for next
+  // flush's append to succeed.
+  busy_wait_ms(DX8WASM_TEL_FLUSH_MS + 100);
+  tel_capture_clear();
+  dx8wasm_tel_pump();
+
+  // The drain above only freed part of the "filler" backlog (its buffer is
+  // smaller than 1024 records' worth of NDJSON); fully empty what remains here
+  // via direct drain calls, outside of pump's own rate-limited flush, so the
+  // *next* pump's tel.dropped append lands in an empty ring and gets drained
+  // immediately — otherwise it would queue behind however many filler records
+  // are still ahead of it and might not fit in the next flush's buffer either,
+  // which would make this test flaky on backlog size rather than a clean
+  // assertion about the bookkeeping.
+  {
+    char drainRest[512];
+    while (dx8wasm_tel_drain(drainRest, sizeof drainRest) != 0) {}
+  }
+
+  // Now pump again. If the bookmark was wrongly advanced before the failed
+  // append above, this flush computes delta = 1 (only the self-drop's own
+  // increment) and the original drop is gone forever. If the bookmark was
+  // correctly left unadvanced, this flush recomputes delta = 2 (the original
+  // trigger_drop plus the self-drop) against the same unmoved watermark, and
+  // — the ring having freed room via the drain above — the append succeeds
+  // and reports the true total.
+  busy_wait_ms(DX8WASM_TEL_FLUSH_MS + 100);
+  tel_capture_clear();
+  dx8wasm_tel_pump();
+  // Exactly 2 drops happened since the ring was last emptied above:
+  // "trigger_drop" (the real one this test is trying to report) and the
+  // pump's own self-drop (its append attempt against the still-full ring).
+  // A correct implementation reports both, eventually, without losing either.
+  if (!tel_capture_has_dropped(2)) {
+    report_error("pump under-reported drops when its own tel.dropped append hit a full ring");
     return 1;
   }
 

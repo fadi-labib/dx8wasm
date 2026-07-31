@@ -84,7 +84,12 @@ uint32_t dx8wasm_tel_dropped(void);
 // other record — must additionally assert it never sees a nonzero "tel.dropped"
 // value, or it cannot distinguish "nothing happened" from "the record was
 // lost". A nonzero value invalidates the measurement window it falls in; it is
-// not a warning to note alongside the result.
+// not a warning to note alongside the result. Conversely, the *absence* of a
+// "tel.dropped" record proves only that no report of loss was pending when the
+// pump last ran — it does not by itself prove the pump ran at all (the call
+// site may never be reached, e.g. in a build or code path that never calls
+// dx8wasm_tel_pump()). Silence is not health; it must be corroborated by some
+// other record actually arriving.
 
 #ifdef __cplusplus
 }  // extern "C"

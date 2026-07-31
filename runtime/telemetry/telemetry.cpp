@@ -279,15 +279,32 @@ void dx8wasm_tel_pump(void) {
     const uint32_t dropped = g_dropped.load(std::memory_order_relaxed);
     const uint32_t delta = dropped - g_lastReportedDropped;  // unsigned, wrap-safe
     if (delta != 0) {
-        // Record the report before appending: if the ring is full right now, this
-        // single append attempt is itself dropped (bumping g_dropped again), but
-        // because g_lastReportedDropped is already advanced to `dropped`, that
-        // extra loss becomes next flush's delta rather than being folded into
-        // this one or retried here. So this can neither recurse nor loop — it is
-        // exactly one append, and a self-drop is simply reported one flush later,
-        // same as any other drop.
-        g_lastReportedDropped = dropped;
+        // Do NOT advance the bookmark before the append: this record is claiming a
+        // slot in the very ring whose fullness is what it exists to report, so the
+        // append can itself be dropped — and if the bookmark were already advanced
+        // at that point, the delta it was reporting (`delta`) would be gone for
+        // good: the next flush would only see the *self*-drop's own +1, never the
+        // original loss. So: attempt the append first, then re-check g_dropped. If
+        // it is unchanged, the append took a real slot and this delta has been
+        // queued for drain — safe to advance the bookmark to `dropped`. If it grew
+        // (this append, or any concurrent producer's, got dropped), leave the
+        // bookmark alone; next flush recomputes a delta against the same
+        // unadvanced watermark and retries, now folding in whatever grew in the
+        // meantime.
+        //
+        // A concurrent producer's drop landing in that same window (between the two
+        // g_dropped reads) makes this retry unconditionally, even though this
+        // append itself may have succeeded — a false-positive retry. That is a
+        // deliberate direction to be wrong in: it can only inflate the next
+        // reported delta (a harmless duplicate/over-count that a summing consumer
+        // sees as a slightly-too-high total, self-correcting the following flush
+        // once no drop is pending), never deflate it. Silently losing a drop report
+        // is the outcome this exists to prevent; a spurious duplicate is an
+        // acceptable trade for that guarantee.
         dx8wasm_tel_counter("tel.dropped", delta);
+        if (g_dropped.load(std::memory_order_relaxed) == dropped) {
+            g_lastReportedDropped = dropped;
+        }
     }
 
     static char buf[16384];
