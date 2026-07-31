@@ -2,6 +2,8 @@
 
 Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The working reference (`~/projects/personal/Generals-WebAssembly`) and GeneralsX/EA are read-only sources we study, not extract from (see `docs/LICENSING.md`). Each phase ends with a runnable/verifiable artifact.
 
+**What is in flight right now:** not all phases below are active. The live work is telemetry and measured-gap verification against the Generals integration — the current evidence base is the "Measured against a real target" section of [`CONFORMANCE.md`](CONFORMANCE.md#measured-against-a-real-target-not-empirically-probed) and [`measured-gap.json`](measured-gap.json). Phases 5 and 6 are parked (see below); everything else is either done or the Phase 3 measured-gap tail.
+
 ## Phase 0 — Spec & scaffold  ✅ (this)
 - `SPEC.md`, `README.md`, `docs/PORTING_METHOD.md`, `docs/LICENSING.md`
 - `runtime/include/dx8wasm/contract.h` — integration ABI
@@ -88,17 +90,28 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - Deliverable: a conformance matrix (which D3D8 states/ops are covered) built against that target.
 
 ## Phase 4 — CI & tests
-- **Linux CI** (GitHub Actions): configure + build + headless render tests + the pack pipeline. This is the anti-regression the reference lacked.
-- Pin Emscripten: 6.0.2's `wasm-opt` crashes on `-g` DWARF (`Assertion !endMap.contains(span.end)`); workaround is re-linking with `-g0`. Lock the version and document both in `cmake/`.
-- Determinism harness stub (for games with replays).
+- ✅ **CI harness done:** `scripts/check.sh` (mechanical guardrails: SPDX headers, commit-authorship, no saturating 32-bit casts of `emscripten_get_now()`) + `scripts/ci.sh` (guardrails + pinned-toolchain check + the full test suite, ~30 smokes across the d3d8webgl/compatlib/telemetry surface) + `.github/workflows/ci.yml`, which just invokes `ci.sh`. Runs locally today; the workflow goes live once this repo has a remote.
+- ✅ **Emscripten pinned:** `.emscripten-version` (6.0.2) is checked by `ci.sh` against the live toolchain; the `wasm-opt`/`-g` DWARF workaround is documented in `cmake/`.
+- Remaining: determinism harness stub (for games with replays).
 
-## Phase 5 — WebGPU backend
+## ⏸️ Parked — Phase 5 — WebGPU backend
+Parked: not started, and not currently justified. The WebGL2 backend already runs a full
+commercial RTS (Generals) at 60 FPS on a real GPU, so a second graphics backend would add
+real risk and ongoing maintenance against no current user need. **Unpark when** a target
+needs compute shaders WebGL2 can't express, or if browser WebGL2 support meaningfully
+degrades.
 - Second graphics backend behind the same interface: fixed-function → SPIR-V (DXVK-modeled) → WGSL (Tint/Naga); SM1.x shaders → WGSL. Share the FF core with WebGL2 via SPIRV-Cross (→GLSL).
-- Deliverable: the headless smoke test passes on both backends.
+- Deliverable (if unparked): the headless smoke test passes on both backends.
 
-## Phase 6 — Second-game validation (prove generality)
+## ⏸️ Parked — Phase 6 — Second-game validation (prove generality)
+Parked: not started. Generality is still the goal, but the cheap version of that proof
+already exists — [`examples/minigame/`](../examples/minigame/) is a working integration
+using only init + D3D8 + pump, with no Generals code in it. Wiring up a second *full* game
+is the expensive version of the same claim, and nothing today says which parts of the SDK
+still need it. **Unpark after** the measured-gap work (see "what is in flight" above) has
+shown which parts of the SDK are Generals-shaped versus genuinely general.
 - Pick a *different* fit: a **DirectDraw-2D** classic (simpler graphics path) or an **OSS reimplementation** (openage/OpenRA). Wire it up; measure how much is drop-in vs gap-fill.
-- Deliverable: a second game running → the SDK is proven reusable, not Generals-shaped.
+- Deliverable (if unparked): a second game running → the SDK is proven reusable, not Generals-shaped.
 
 ## Phase A — full D3D8 COM ABI ✅ (Generals integration prerequisite)
 The clean-room `d3d8.h` is now the **complete standard D3D8 interface** in canonical
