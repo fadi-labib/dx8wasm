@@ -85,3 +85,32 @@ coverage layer — never silently wrong.
 | Fog: linear | eye-space depth blend | ✅ yes | fog_smoke |
 | Fog: EXP / EXP2 | flagged via coverage | ❌ no | — |
 | Coverage / fallback layer | dx8wasm_get_coverage + unhandled callback | ✅ yes | coverage_smoke |
+
+## Measured against a real target (not empirically probed)
+
+**This is a capture, not a probe — do not read it as an empirically probed row.**
+Every table above is produced by this repo's own conformance program setting each
+token on a live device and reading its own coverage counters back, so it cannot
+drift from what the runtime does. The table below instead reports what one real
+game's telemetry recorded it asking for during real play — a measurement taken
+outside this repo and hand-copied in via `docs/measured-gap.json`. A row here
+says "a target hit this token N times", never "this SDK's probe confirmed this".
+
+Measured against **C&C Generals Zero Hour**, scenarios: menu, skirmish, campaign.
+Source: `generals-dx8wasm/docs/D3D8-MEASURED-GAP.md` @ `35b619cbebf2`
+(commit dated 2026-07-31T11:34:01+02:00). This is a capture, not a probe: three real-GPU playthroughs read the SDK's own d3d8.unhandled.<kind>.<hex> coverage counters via NDJSON telemetry. Each scenario's numbers were accepted only after asserting malformed === 0 and a contiguous seq range. The skirmish scenario's numbers were transcribed from a prior run's stdout (not re-captured for the source doc's final pass) — see the source doc's per-scenario provenance notes; menu and campaign were captured live for that doc. Counts are a floor, not an exact total: the coverage layer's per-token tally can leave up to ~1s of trailing activity unflushed at capture end (source doc caveat #2).
+
+| Token | Standard D3D8 name | Total hits (all scenarios) | Disposition | Why |
+|---|---|---|---|---|
+| `d3d8.unhandled.rstate.000000a4` | D3DRS_PATCHSEGMENTS *(not declared in this SDK's `d3d8.h`)* | 40138 | No-op (documented) | N-patch tessellation segment count. W3D smuggles a float bit-pattern through this render state as a side channel (engine/GeneralsX/.../WW3D2/shader.cpp:1036) rather than requesting tessellation; WebGL2 has no tessellation stage to implement against. Most-hit token in every scenario, but hit count reflects call-site frequency, not desirability — implementing it is not the right action. |
+| `d3d8.unhandled.rstate.00000008` | D3DRS_FILLMODE | 19392 | Implement | Fill mode (solid/wireframe/point). Cheap and expressible; the path that matters wants D3DFILL_SOLID, already what the SDK draws. Coupled to runtime/test/coverage_smoke.cpp, which deliberately uses this token as its stable-unimplemented probe — implementing it requires re-pointing that smoke at a still-unimplemented token in the same change. |
+| `d3d8.unhandled.rstate.00000099` | D3DRS_SOFTWAREVERTEXPROCESSING *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Device-pipeline mode switch (software vs hardware vertex processing). The SDK has exactly one vertex path (GLSL on the GPU) and no software fallback to switch to; nothing to implement. |
+| `d3d8.unhandled.rstate.00000030` | D3DRS_RANGEFOGENABLE *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Range-based fog enable, set twice at init and never again — almost certainly the engine writing D3D8's own FALSE default during a blanket state reset (the coverage layer records the token, not the value, so this is inferred, not measured). If range fog is ever genuinely enabled, it is expressible via the SDK's existing shader-emulated fog and should move to implement. |
+| `d3d8.unhandled.rstate.00000092` | D3DRS_SPECULARMATERIALSOURCE | 6 | Implement | Already declared in this SDK's d3d8.h; only the handler is missing. Set twice at init (costs nothing at runtime) — part of the known D3DFVF_SPECULAR / specular-lighting gap, to be picked up with that slice rather than separately. |
+| `d3d8.unhandled.tsstate.00000007` | D3DTSS_BUMPENVMAT00 *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment matrix element. Inert without the D3DTOP_BUMPENVMAP/BUMPENVMAPLUMINANCE colour ops that consume it, and no texop token appears anywhere in this measurement, so the game never asked for bump mapping itself. Written as part of a blanket stage-state reset at device init. Implementing the matrix without the op would be dead code; the op — not this — is what would have to arrive first. |
+| `d3d8.unhandled.tsstate.00000008` | D3DTSS_BUMPENVMAT01 *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment matrix element; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+| `d3d8.unhandled.tsstate.00000009` | D3DTSS_BUMPENVMAT10 *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment matrix element; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+| `d3d8.unhandled.tsstate.0000000a` | D3DTSS_BUMPENVMAT11 *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment matrix element; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+| `d3d8.unhandled.tsstate.00000015` | D3DTSS_MAXANISOTROPY *(not declared in this SDK's `d3d8.h`)* | 6 | Implement | A plain sampler parameter, not a pipeline feature. Maps directly onto EXT_texture_filter_anisotropic's TEXTURE_MAX_ANISOTROPY_EXT where present, clamps to 1 where absent. Only init-time hits (6 total), so a small texture-quality win rather than a hot-path fix — but this project has already been bitten once by empty texture-filter caps producing blocky textures. |
+| `d3d8.unhandled.tsstate.00000016` | D3DTSS_BUMPENVLSCALE *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment luminance scale; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+| `d3d8.unhandled.tsstate.00000017` | D3DTSS_BUMPENVLOFFSET *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment luminance offset; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |

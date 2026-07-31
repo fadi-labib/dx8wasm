@@ -86,8 +86,12 @@ static_assert(sizeof(DX8WASM_KIND_TSSTATE) - 1 <= kTelKindMaxLen, DX8WASM_KIND_T
 // accounted as a drop either, because it was never decided to be dropped — it is
 // asleep, not lost. dx8wasm_tel_pump() does not know about this tally and cannot
 // wake it: it only drains records the tally has already flushed into the ring.
-// In practice Task 9's capture reducer calls dx8wasm_get_coverage() at its read
-// points, which is what actually bounds this in a real capture.
+// This is not merely theoretical: a real capture harness (the game-integration
+// repo's coverage-dump-test.mjs) does NOT call dx8wasm_get_coverage() — it only
+// reads [gxotel] NDJSON off the console — so the tail described above is real in
+// practice, not just on paper. What actually bounds this in that harness is the
+// time-based flush in tally_record() above (DX8WASM_TEL_FLUSH_MS) and the
+// table-full flush; nothing calls dx8wasm_get_coverage() to add a third bound.
 constexpr int kTallyCapacity = 64;   // A real playthrough's distinct unhandled tokens
                                       // are a small subset of the ~150 D3DRS + ~25
                                       // D3DTOP + ~30 D3DTSS + a handful of D3DFMT
