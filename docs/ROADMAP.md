@@ -61,6 +61,25 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
     `D3DTSS_BUMPENVMAT00/01/10/11`/`BUMPENVLSCALE`/`BUMPENVLOFFSET` (inert without
     `D3DTOP_BUMPENVMAP`, which never appears in this measurement — the game never
     asked for bump mapping itself).
+  - **Measured-absent (this capture never asked for it, with a caveat):** the
+    previous version of this list also named **EXP/EXP2 fog** and **more texture
+    formats** as remaining work; both now have a zero-hit finding in
+    [`measured-gap.json`](measured-gap.json#zero-hit-findings)/CONFORMANCE.md's
+    "Zero-hit findings" table rather than being silently dropped. EXP/EXP2 fog:
+    zero fog coverage hits across all three scenarios — but the coverage layer
+    only fires on a non-LINEAR/NONE `FOGTABLEMODE`/`FOGVERTEXMODE`
+    (`runtime/d3d8webgl/device.cpp:673`), so this proves EXP/EXP2 was never *set*,
+    not that fog is unused — linear fog is implemented and may well be load-bearing.
+    Texture formats: zero unhandled-format hits — every format the game requested
+    in these captures was already supported, a genuine (if target-specific)
+    negative result since format requests are instrumented too
+    (`runtime/d3d8webgl/device.cpp:575,972`).
+  - **This measurement does not speak to it:** the previous version of this list
+    also named **vertex-blend**. Unlike the above, there is no coverage
+    instrumentation for it at all — vertex blending is carried by `D3DFVF_XYZB1-5`
+    vertex-format bits, not a `D3DRS_*`/`D3DTSS_*`/`D3DTOP_*`/`D3DFMT_*` token the
+    coverage layer watches — so its absence from every capture proves nothing
+    either way. Its status is genuinely unknown until an instrument for it exists.
   - Cross-check any new handler against DXVK/Wine but **never paste** (LGPL).
   - This measurement is Generals-specific; a different target will surface a
     different gap. Re-measure rather than assuming this list is exhaustive.

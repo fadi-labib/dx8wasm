@@ -114,3 +114,16 @@ Source: `generals-dx8wasm/docs/D3D8-MEASURED-GAP.md` @ `35b619cbebf2`
 | `d3d8.unhandled.tsstate.00000015` | D3DTSS_MAXANISOTROPY *(not declared in this SDK's `d3d8.h`)* | 6 | Implement | A plain sampler parameter, not a pipeline feature. Maps directly onto EXT_texture_filter_anisotropic's TEXTURE_MAX_ANISOTROPY_EXT where present, clamps to 1 where absent. Only init-time hits (6 total), so a small texture-quality win rather than a hot-path fix — but this project has already been bitten once by empty texture-filter caps producing blocky textures. |
 | `d3d8.unhandled.tsstate.00000016` | D3DTSS_BUMPENVLSCALE *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment luminance scale; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
 | `d3d8.unhandled.tsstate.00000017` | D3DTSS_BUMPENVLOFFSET *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment luminance offset; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+
+### Zero-hit findings
+
+These are also measured, not probed — but instead of "this token fired N times",
+each row here is "this coverage-instrumented token/op/format never fired at all,
+in any of the three scenarios". Read each row's own caveat before treating a zero
+as proof of non-use; several of these prove less than they might first appear to.
+
+| Kind | Describes | Meaning |
+|---|---|---|
+| `texop` | D3DTOP_BUMPENVMAP / D3DTOP_BUMPENVMAPLUMINANCE | No unsupported texture-stage colour op was ever requested in any of the three scenarios — in particular neither bump-environment op, which is the only consumer of the six D3DTSS_BUMPENVMAT*/BUMPENVLSCALE/BUMPENVLOFFSET tokens in the table above. Those six tokens are hit (set at init) but inert without an op to consume them, so this proves the game never asked for bump-environment mapping itself. It does not prove no D3D8 title ever uses bump mapping, and it does not make the six state tokens worthless to keep tracking — a future capture that does hit the op would make them live. |
+| `rstate` | D3DRS_FOGTABLEMODE(EXP/EXP2) / D3DRS_FOGVERTEXMODE(EXP/EXP2) | No fog coverage counter fired in any of the three scenarios. The coverage layer only counts a hit when FOGTABLEMODE/FOGVERTEXMODE is set to a value other than LINEAR or NONE (runtime/d3d8webgl/device.cpp:673), so this proves EXP/EXP2 fog was never *set* by the game across these captures. It does not prove fog is unused: linear fog is implemented and a LINEAR write produces no counter either way, so this measurement cannot distinguish 'the game relies on linear fog' from 'the game never touches fog at all'. |
+| `format` | any D3DFORMAT outside this SDK's supported set (see Texture formats table above) | No unhandled-format coverage counter fired in any of the three scenarios — every CreateTexture/LockRect(-style) format request the game made across menu, skirmish, and campaign was one this SDK already supports. This is a genuine negative result (the coverage layer does instrument format requests, at runtime/d3d8webgl/device.cpp:575,972), not an instrumentation gap: it means 'more texture formats' is not evidenced as outstanding work by this measurement, for this target. |

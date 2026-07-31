@@ -85,7 +85,7 @@ const measuredGapPath = join(repo, 'docs', 'measured-gap.json');
 let measuredSection = '';
 if (existsSync(measuredGapPath)) {
   const measured = JSON.parse(readFileSync(measuredGapPath, 'utf8'));
-  const { provenance, tokens } = measured;
+  const { provenance, tokens, negativeResults } = measured;
   const dispositionLabel = { implement: 'Implement', 'no-op': 'No-op (documented)' };
   const measuredRows = tokens
     .slice()
@@ -96,6 +96,27 @@ if (existsSync(measuredGapPath)) {
       return `| \`d3d8.unhandled.${t.kind}.${t.hex}\` | ${name} | ${t.totalHits} | ${disp} | ${t.reason} |`;
     })
     .join('\n');
+
+  // Zero-hit findings: things the coverage layer *can* instrument (a token/op/format
+  // kind exists) but that never fired their counter in any of the three scenarios.
+  // That silence is itself a result — "provably never asked for", not "unmeasured" —
+  // but only for kinds the coverage layer actually watches; see docs/measured-gap.json's
+  // own note on each entry for what the zero hit count does and does not prove.
+  const negativeSection = (negativeResults && negativeResults.length)
+    ? `
+### Zero-hit findings
+
+These are also measured, not probed — but instead of "this token fired N times",
+each row here is "this coverage-instrumented token/op/format never fired at all,
+in any of the three scenarios". Read each row's own caveat before treating a zero
+as proof of non-use; several of these prove less than they might first appear to.
+
+| Kind | Describes | Meaning |
+|---|---|---|
+${negativeResults.map((n) => `| \`${n.kind}\` | ${n.describes} | ${n.meaning} |`).join('\n')}
+`
+    : '';
+
   measuredSection = `
 ## Measured against a real target (not empirically probed)
 
@@ -114,7 +135,7 @@ Source: \`${provenance.sourceRepo}/${provenance.sourceDoc}\` @ \`${provenance.so
 | Token | Standard D3D8 name | Total hits (all scenarios) | Disposition | Why |
 |---|---|---|---|---|
 ${measuredRows}
-`;
+${negativeSection}`;
 }
 
 const md = `# Conformance matrix
