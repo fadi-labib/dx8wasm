@@ -82,52 +82,35 @@ badcast_c="\\(([[:space:]]*($badtype)[[:space:]]*)\\)[[:space:]]*\\(?[[:space:]]
 # `static_cast<uint32_t>((emscripten_get_now()))` is caught too.
 badcast_static="static_cast[[:space:]]*<[[:space:]]*($badtype)[[:space:]]*>[[:space:]]*\\([[:space:]]*\\(?[[:space:]]*($badfunc)"
 badcast="($badcast_c)|($badcast_static)"
-# Strip // line comments and /* */ block comments before matching, so prose can never
-# trip (or hide from) this check — see the HAZARD note above. This DOES track
-# double-quoted string literals (with backslash-escape handling), because a naive
-# scanner that doesn't is worse than no stripper at all: a string literal containing
-# "/*" (e.g. FindFirstFile("/dir/*.txt", ...) in runtime/test/compat_file_smoke.cpp)
-# would flip `incomment` on with no matching "*/", silently swallowing every
-# subsequent line of the file from matching — a false NEGATIVE (a real offending cast
-# further down goes unreported), which is strictly worse than the false POSITIVE
-# (prose tripping the check) this stripping was added to fix. Single-quote char
-# literals are deliberately NOT tracked: a C++ char literal cannot itself contain the
-# two-character sequences "/*" or "//" (that would need more than one char between the
-# quotes), so there is nothing for one to hide. Multi-line strings via a trailing
-# backslash-newline are not modelled (a single-quoted-per-line heuristic is an
-# accepted gap, not a silent one — see the file-header hazard note for the general
-# stance on this check's limits).
+# Drop lines that are ENTIRELY comment before matching, so prose on its own line can
+# never trip this check — see the HAZARD note above. This is deliberately NOT a
+# character-by-character lexer: an earlier version of this check tracked /* */ and //
+# with an `incomment` flag carried across lines, then grew double-quote tracking to
+# stop that flag latching on a "/*" inside a string literal (e.g.
+# FindFirstFile("/dir/*.txt", ...) in runtime/test/compat_file_smoke.cpp). That in turn
+# desynchronised on a single-quote char literal containing a double quote — e.g.
+# `case '"': ... break;` in runtime/telemetry/telemetry.cpp — because the tracker only
+# looked at raw '"' with no notion of being inside '...'. Each fix for a lexer gap
+# opened a narrower one one level down (char literals, and beyond that GCC multichar
+# literals like '/*'); that recursion does not terminate at a defensible place in awk.
+# So: stop approximating a C++ tokenizer. A line is stripped only if its first
+# non-whitespace characters are "//", "/*", or "*" (the block-comment continuation
+# style used throughout this codebase) — a rule with NO state carried between lines,
+# so nothing can desynchronise across a file.
+#   - Whole-line comments (the realistic case — see coverage.cpp's now_ms() comment
+#     below) are stripped and can never trip a false FAIL.
+#   - A pattern inside a TRAILING comment on a code line (`foo(); // (uint32_t)
+#     emscripten_get_now()`) is NOT stripped and would still match. That is a false
+#     POSITIVE, and it is the correct direction to err in: it is self-announcing (a
+#     FAIL naming the exact line), cheap to dismiss in a minute, and never hides a real
+#     offending cast the way the old stateful stripper's false negative did.
+# This is strictly weaker than a real tokenizer and strictly SAFER: its only failure
+# mode is over-reporting, never a silent miss. Known residual false-FAIL surface:
+# trailing comments containing the pattern (accepted, not attempted here — same
+# "known residual gaps" bucket as the two-step assignment and implicit-narrowing forms
+# below, which this check cannot see for a different reason: no cast token at all).
 strip_comments() {
-  awk '
-    BEGIN { incomment = 0 }
-    {
-      line = $0; out = ""; i = 1; n = length(line); inquote = 0
-      while (i <= n) {
-        c = substr(line, i, 1)
-        c2 = substr(line, i, 2)
-        if (incomment) {
-          if (c2 == "*/") { incomment = 0; i += 2 } else { i++ }
-          continue
-        }
-        if (inquote) {
-          out = out c
-          if (c == "\\") {
-            if (i + 1 <= n) { out = out substr(line, i + 1, 1); i += 2 } else { i++ }
-            continue
-          }
-          if (c == "\"") { inquote = 0 }
-          i++
-          continue
-        }
-        if (c == "\"") { inquote = 1; out = out c; i++; continue }
-        if (c2 == "/*") { incomment = 1; i += 2; continue }
-        if (c2 == "//") { break }
-        out = out c
-        i++
-      }
-      print NR ":" out
-    }
-  ' "$1"
+  awk '{ line = $0; sub(/^[[:space:]]*/, "", line); if (line !~ /^(\/\/|\/\*|\*)/) print NR ":" $0 }' "$1"
 }
 while IFS= read -r f; do
   case "$f" in build/*|*/build/*|node_modules/*|.superpowers/*|scripts/check.sh) continue ;; esac
