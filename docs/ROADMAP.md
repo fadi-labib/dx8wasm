@@ -120,4 +120,7 @@ The seam a real game plugs into, all via the public surface (see [`docs/INTEGRAT
 
 ## Cross-cutting, ongoing
 - **dx8wasm is the home for future work.** The Generals repos (`Generals-WebAssembly`, `Generals-Mac-iOS-iPad`) are **read-only reference sources** we study for behavior — we don't sync from them or push back to Lolendor (low-trust, AI-generated; see `docs/LICENSING.md`).
-- Document every gap-fill as a lessons entry (per `PORTING_METHOD.md` §6).
+- Document every gap-fill as a lessons entry (per `PORTING_METHOD.md` §6). SDK-side lessons library:
+  [`RESULTS-2026-08-01-close-the-docs-items.md`](RESULTS-2026-08-01-close-the-docs-items.md)
+  (`CDI-1`..`CDI-27` — documentation drift, plans written without compiling them, coverage
+  instrumentation as a work list, failure modes the suite cannot see, parallel worktree execution).
