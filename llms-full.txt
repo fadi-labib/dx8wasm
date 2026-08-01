@@ -170,8 +170,11 @@ still does — a smoke that only checked the first half could pass by silencing 
 `runtime/test/frame_digest.h` folds a `glReadPixels` into a chained FNV-1a digest.
 `determinism_smoke` uses it to prove one render sequence repeats identically in-process, and
 `scripts/determinism.mjs` (in `ci.sh`) proves the digest reproduces across fresh browser
-contexts. A game with replays extends the same pattern by digesting its own per-tick simulation
-state and comparing across runs — that is the desync check, and this is the SDK-side half of it.
+contexts. Today's digested sequence is clears only (no draw call), so this currently proves
+bit-for-bit stability of the clear/present/readback path, not yet shader-cache-key stability —
+that needs the sequence to include a draw. A game with replays extends the same pattern by
+digesting its own per-tick simulation state and comparing across runs — that is the desync check,
+and this is the SDK-side half of it.
 
 ---
 
@@ -652,7 +655,7 @@ coverage layer — never silently wrong.
 | `D3DRS_STENCILENABLE` | ✅ handled |
 | `D3DRS_TEXTUREFACTOR` | ✅ handled |
 
-## Texture-stage color ops (6/6 handled)
+## Texture-stage color ops (6/7 handled)
 
 | Op | Status |
 |----|--------|
@@ -662,8 +665,9 @@ coverage layer — never silently wrong.
 | `D3DTOP_ADD` | ✅ handled |
 | `D3DTOP_MODULATE2X` | ✅ handled |
 | `D3DTOP_ADDSIGNED` | ✅ handled |
+| `D3DTOP_MULTIPLYADD` | ⚠️ fallback |
 
-## Texture formats (5/5 handled)
+## Texture formats (5/6 handled)
 
 | Format | Status |
 |--------|--------|
@@ -672,6 +676,7 @@ coverage layer — never silently wrong.
 | `D3DFMT_R5G6B5` | ✅ handled |
 | `D3DFMT_A8` | ✅ handled |
 | `D3DFMT_DXT1` | ✅ handled |
+| `D3DFMT_UYVY` | ⚠️ fallback |
 
 ## Feature coverage
 
@@ -688,7 +693,7 @@ coverage layer — never silently wrong.
 | Transforms: WORLD / VIEW / PROJECTION | row-major uploaded transposed | ✅ yes | draw_smoke |
 | Textures: LockRect upload | full mip chain; per-stage filter + address state honored | ✅ yes | draw_tex_smoke |
 | Texture combiners (stage 0) | MODULATE/2X/4X, ADD, ADDSIGNED, SELECTARG1/2 | ✅ yes | draw_tex_smoke / combiner_smoke |
-| Texture formats: 16-bit + DXT1 | A4R4G4B4/R5G6B5/A8/L8 decode + S3TC block upload | ✅ yes | texfmt_smoke / dxt_smoke |
+| Texture formats: 16-bit + DXT1/3/5 | A4R4G4B4/R5G6B5/A8/L8 decode + DXT1/3/5 CPU-decompressed to RGBA (no S3TC extension needed) | ✅ yes | texfmt_smoke / dxt_smoke |
 | Surfaces | GetSurfaceLevel, CreateImageSurface, CopyRects, UpdateTexture | ✅ yes | surface_smoke |
 | Material colour source | D3DRS_{DIFFUSE,AMBIENT,EMISSIVE}MATERIALSOURCE + D3DRS_COLORVERTEX | ✅ yes | matsource_smoke |
 | World-space normals | normal matrix follows a non-identity world transform | ✅ yes | normal_smoke |
@@ -704,7 +709,7 @@ coverage layer — never silently wrong.
 | Fog: linear | eye-space depth blend | ✅ yes | fog_smoke |
 | Fog: EXP / EXP2 | flagged via coverage | ❌ no | — |
 | Coverage / fallback layer | dx8wasm_get_coverage + unhandled callback | ✅ yes | coverage_smoke |
-| Anisotropic filtering | D3DTSS_MAXANISOTROPY via EXT_texture_filter_anisotropic, clamped to the device limit | ✅ yes | accepted_states_smoke |
+| Anisotropic filtering | D3DTSS_MAXANISOTROPY via EXT_texture_filter_anisotropic, clamped to the device limit; a textured draw with the state set is pixel-verified, not just accepted | ✅ yes | accepted_states_smoke |
 | Accepted-without-acting states | FILLMODE(SOLID), PATCHSEGMENTS, SOFTWAREVERTEXPROCESSING, RANGEFOGENABLE, 6x BUMPENV* — no-op with a written reason, not counted | ✅ yes | accepted_states_smoke |
 | Vertex blending (D3DFVF_XYZB1-5) | not implemented, but now instrumented so a capture can measure it | ❌ no | vertexblend_smoke |
 | Fog usage telemetry | every fog-mode transition recorded, so "fog unused" is falsifiable | ✅ yes | fogmode_smoke |
