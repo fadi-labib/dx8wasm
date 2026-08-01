@@ -41,60 +41,37 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - ✅ **3.7 done:** pre-transformed vertices (`D3DFVF_XYZRHW`) — the UI/HUD/2D path. The vertex shader maps screen-pixel coords straight to clip space (D3D top-left origin → Y-flip, `z*2−1` for depth), bypassing world/view/proj; uses a `uViewport` uniform from the device's backbuffer size. Attribute 0 becomes a `vec4`; `lit`/rhw are mutually exclusive. `rhw`=1 assumed (perspective 2D deferred). Verified by `rhw_smoke`: a screen-space quad over the right half lights the right pixel green and leaves the left black.
 - ✅ **3.8 done:** all primitive types. `DrawIndexedPrimitive` maps every `D3DPT_*` (point/line list+strip, triangle list/strip/fan) to its GL mode and derives the index count from the primitive count (`*3`, `+2`, `*2`, `+1`, etc.) instead of hard-rejecting non-`TRIANGLELIST`. Verified by `strip_smoke`: a 4-index triangle strip (primCount 2) fills the quad.
 - ✅ **3.9 done:** texture-stage combiners — `MODULATE`, `MODULATE2X/4X`, `ADD`, `ADDSIGNED`, `SELECTARG1/2` over the default args (arg1=texture, arg2=diffuse); D3D saturation via the framebuffer's UNORM clamp. Verified by `combiner_smoke` (`ADD`); coverage-probe texture ops now 6/6. `coverage_smoke` op probe moved to `D3DTOP_SUBTRACT`.
-- Remaining fixed-function work, now **measured** rather than guessed, is being closed by
-  [`superpowers/plans/2026-08-01-close-the-remaining-docs-items.md`](superpowers/plans/2026-08-01-close-the-remaining-docs-items.md)
-  (Tier 2 implements + documents the no-ops; Tier 3 adds the two missing instruments) — see
-  [`docs/measured-gap.json`](measured-gap.json) and the generated "Measured against a
-  real target" section of [`CONFORMANCE.md`](CONFORMANCE.md#measured-against-a-real-target-not-empirically-probed)
-  (three real-GPU C&C Generals ZH captures: menu, skirmish, campaign; 12 distinct
-  unhandled tokens, identical across all three). Ordered by hit count within each
-  bucket, but **hit count is frequency, not desirability** — `D3DRS_PATCHSEGMENTS`
-  is the most-hit token of all and belongs in the no-op bucket, not the implement one:
-  - **Implement:** `D3DRS_FILLMODE` (wireframe/point fill mode; note this is
-    `coverage_smoke`'s current stable-unimplemented probe, which must move to a
-    still-unimplemented token in the same change), `D3DRS_SPECULARMATERIALSOURCE`
-    (already declared in `d3d8.h`, only the handler is missing — pairs with the
-    known specular/`D3DFVF_SPECULAR` gap), `D3DTSS_MAXANISOTROPY` (a sampler
-    parameter — `EXT_texture_filter_anisotropic` where present, clamp to 1 otherwise).
-  - **No-op, and say why in the code:** `D3DRS_PATCHSEGMENTS` (W3D smuggles a float
-    bit-pattern through it as an N-patch tessellation hint WebGL2 cannot express —
-    not a real render-state request despite topping every scenario),
-    `D3DRS_SOFTWAREVERTEXPROCESSING` (no software vertex path exists to switch to),
-    `D3DRS_RANGEFOGENABLE` (set twice at init, almost certainly writing D3D8's own
-    default), and the six bump-environment texture-stage states
-    `D3DTSS_BUMPENVMAT00/01/10/11`/`BUMPENVLSCALE`/`BUMPENVLOFFSET` (inert without
-    `D3DTOP_BUMPENVMAP`, which never appears in this measurement — the game never
-    asked for bump mapping itself).
-  - **Measured-absent (this capture never asked for it, with a caveat):** the
-    previous version of this list also named **EXP/EXP2 fog** and **more texture
-    formats** as remaining work; both now have a zero-hit finding in
-    [`measured-gap.json`](measured-gap.json#zero-hit-findings)/CONFORMANCE.md's
-    "Zero-hit findings" table rather than being silently dropped. EXP/EXP2 fog:
-    zero fog coverage hits across all three scenarios — but the coverage layer
-    only fires on a non-LINEAR/NONE `FOGTABLEMODE`/`FOGVERTEXMODE`
-    (`runtime/d3d8webgl/device.cpp:673`), so this proves EXP/EXP2 was never *set*,
-    not that fog is unused — linear fog is implemented and may well be load-bearing.
-    Texture formats: zero unhandled-format hits — every format the game requested
-    in these captures was already supported, a genuine (if target-specific)
-    negative result since format requests are instrumented too
-    (`runtime/d3d8webgl/device.cpp:575,972`).
-  - **This measurement does not speak to it:** the previous version of this list
-    also named **vertex-blend**. Unlike the above, there is no coverage
-    instrumentation for it at all — vertex blending is carried by `D3DFVF_XYZB1-5`
-    vertex-format bits, not a `D3DRS_*`/`D3DTSS_*`/`D3DTOP_*`/`D3DFMT_*` token the
-    coverage layer watches — so its absence from every capture proves nothing
-    either way. Its status is genuinely unknown until an instrument for it exists.
-  - Cross-check any new handler against DXVK/Wine but **never paste** (LGPL).
-  - This measurement is Generals-specific; a different target will surface a
-    different gap. Re-measure rather than assuming this list is exhaustive.
+- ✅ **Measured-gap tail closed (2026-08-01)** — every token in
+  [`measured-gap.json`](measured-gap.json) is now actioned, per
+  [`superpowers/plans/2026-08-01-close-the-remaining-docs-items.md`](superpowers/plans/2026-08-01-close-the-remaining-docs-items.md).
+  Implemented: `D3DRS_FILLMODE` (value-sensitive — `SOLID` is exact, `WIREFRAME`/`POINT` keep
+  reporting because GLES3 has no `glPolygonMode`), `D3DTSS_MAXANISOTROPY`
+  (`EXT_texture_filter_anisotropic`, clamped to the device limit),
+  `D3DRS_SPECULARMATERIALSOURCE` (`MATERIAL`/`COLOR1`; `COLOR2` still reports, since
+  `D3DFVF_SPECULAR` is not uploaded as an attribute). Accepted-and-ignored with a reason at each
+  call site: `D3DRS_PATCHSEGMENTS`, `D3DRS_SOFTWAREVERTEXPROCESSING`, `D3DRS_RANGEFOGENABLE`, and
+  the six `D3DTSS_BUMPENV*` states — `D3DTOP_BUMPENVMAP` stays unimplemented and reported, so the
+  prerequisite op remains the signal. All verified by `accepted_states_smoke`.
+- ✅ **Both instrumentation blind spots closed:** vertex blending (`D3DFVF_XYZB1-5`) now has a
+  coverage counter of its own (`vertexblend_smoke`) — it previously had none, so its absence from
+  a capture proved nothing — and fog-mode *transitions* now emit telemetry regardless of value
+  (`fogmode_smoke`), so "fog unused" is falsifiable rather than merely unobserved.
 - ✅ **Capstone done:** [`CONFORMANCE.md`](CONFORMANCE.md) — a conformance matrix generated by `scripts/conformance.mjs`. The `conformance` probe program exercises each D3D8 token against a live device and reads the coverage counters to classify handled vs fallback (empirical, can't drift); the feature table is curated and paired with each verifying smoke. Current: render states 17/20, texture ops 3/6, formats 2/5, all fixed-function lighting + linear fog.
 - Initial coverage target = Generals' *measured* D3D8 surface: ~80 `D3DRS_*`, the `D3DTSS_*` combiners, `D3DTS_WORLD/VIEW`, `D3DLIGHT` fixed-function lighting, FVF formats, and only 8 real `.vso/.pso` SM1.x shaders.
 - Deliverable: a conformance matrix (which D3D8 states/ops are covered) built against that target.
 
 ## Phase 4 — CI & tests
-- ✅ **CI harness done:** `scripts/check.sh` (mechanical guardrails: SPDX headers, commit-authorship, no saturating 32-bit casts of `emscripten_get_now()`) + `scripts/ci.sh` (guardrails + pinned-toolchain check + the full test suite, 31 smokes across the d3d8webgl/compatlib/telemetry surface — every `CMakeLists.txt` executable target except `conformance`, `minigame`, and `spin_demo`) + `.github/workflows/ci.yml`, which just invokes `ci.sh`. Runs locally today; the workflow goes live once this repo has a remote.
+- ✅ **CI harness done:** `scripts/check.sh` (mechanical guardrails: SPDX headers, commit-authorship, no saturating 32-bit casts of `emscripten_get_now()`) + `scripts/ci.sh` (guardrails + pinned-toolchain check + the full test suite, 35 smokes across the d3d8webgl/compatlib/telemetry surface — every `CMakeLists.txt` executable target except `conformance`, `minigame`, and `spin_demo`) + `.github/workflows/ci.yml`, which just invokes `ci.sh`. Runs locally today; the workflow goes live once this repo has a remote.
 - ✅ **Emscripten pinned:** `.emscripten-version` (6.0.2) is checked by `ci.sh` against the live toolchain; the `wasm-opt`/`-g` DWARF workaround is documented in `cmake/`.
-- Remaining: determinism harness stub (for games with replays).
+- ✅ **Determinism harness done:** `determinism_smoke` digests one fixed render sequence twice
+  in-process (catches state left dirty by the first pass) and `scripts/determinism.mjs` compares
+  the digest across fresh browser contexts (catches uninitialised memory and iteration-order-
+  dependent shader-cache keys). Both run in `ci.sh`. A game with replays extends the same seam by
+  digesting its own per-tick simulation state. `runtime/test/frame_digest.h` is the reusable
+  FNV-1a-over-`glReadPixels` helper.
+
+**Phase 4 complete.** Every non-parked phase is now closed; the open list is exactly the two
+parked phases plus compatlib's grow-on-demand tiers.
 
 ## ⏸️ Parked — Phase 5 — WebGPU backend
 Parked: not started, and not currently justified. The WebGL2 backend already runs a full

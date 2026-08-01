@@ -52,6 +52,36 @@ scene, drawn before that pass, kept appearing; the entire 2D UI, drawn after it,
 presented as a missing menu, not as a device error — which is exactly what a stub that reports
 success buys you. A stub that fails is debuggable in minutes; one that lies is not.
 
+### Accepted without acting ≠ unimplemented
+
+A coverage counter means one thing: *this backend does not implement the token and fell back*.
+Some D3D8 states are deliberately accepted and ignored, and those must **not** count — the
+distinction is what keeps `dx8wasm_get_coverage` useful as a work list.
+
+- `D3DRS_FILLMODE(D3DFILL_SOLID)` is exactly what the backend draws, so accepting it is exact.
+  `WIREFRAME`/`POINT` still count: GLES3 has no `glPolygonMode`, so they genuinely cannot be
+  expressed.
+- `D3DRS_PATCHSEGMENTS`, `D3DRS_SOFTWAREVERTEXPROCESSING`, `D3DRS_RANGEFOGENABLE` and the six
+  `D3DTSS_BUMPENV*` states are no-ops with the reason written at each call site in
+  `runtime/d3d8webgl/device.cpp`.
+
+Why it matters: while these shared a counter with real gaps, `D3DRS_PATCHSEGMENTS` — a float bit
+pattern the engine smuggles through a render state, not a rendering request at all — was the
+most-hit token in every scenario of a real capture, outranking every genuine finding. Ranking by
+hit count is only meaningful once decisions stop being counted as gaps.
+
+When you add a no-op, write the reason at the call site and add it to `accepted_states_smoke`,
+which asserts that the accepted set moves no counter *and* that a genuinely-unexpressible token
+still does — a smoke that only checked the first half could pass by silencing everything.
+
+### Determinism seam
+
+`runtime/test/frame_digest.h` folds a `glReadPixels` into a chained FNV-1a digest.
+`determinism_smoke` uses it to prove one render sequence repeats identically in-process, and
+`scripts/determinism.mjs` (in `ci.sh`) proves the digest reproduces across fresh browser
+contexts. A game with replays extends the same pattern by digesting its own per-tick simulation
+state and comparing across runs — that is the desync check, and this is the SDK-side half of it.
+
 ---
 
 ## 1. D3D8 API — `runtime/d3d8/d3d8.h`

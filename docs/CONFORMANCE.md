@@ -10,7 +10,7 @@ Scope: the fixed-function subset a DirectX-8 game (target: C&C Generals) needs.
 "fallback" means the token is safely ignored/substituted and logged via the
 coverage layer — never silently wrong.
 
-## Render states (23/26 handled)
+## Render states (25/29 handled)
 
 | State | Status |
 |-------|--------|
@@ -33,7 +33,10 @@ coverage layer — never silently wrong.
 | `D3DRS_FOGTABLEMODE(LINEAR)` | ✅ handled |
 | `D3DRS_FOGTABLEMODE(EXP)` | ⚠️ fallback |
 | `D3DRS_FOGDENSITY` | ⚠️ fallback |
-| `D3DRS_FILLMODE` | ⚠️ fallback |
+| `D3DRS_FILLMODE(SOLID)` | ✅ handled |
+| `D3DRS_FILLMODE(WIREFRAME)` | ⚠️ fallback |
+| `D3DRS_SPECULARMATERIALSOURCE(MATERIAL)` | ✅ handled |
+| `D3DRS_SPECULARMATERIALSOURCE(COLOR2)` | ⚠️ fallback |
 | `D3DRS_ZFUNC` | ✅ handled |
 | `D3DRS_DITHERENABLE` | ✅ handled |
 | `D3DRS_ZBIAS` | ✅ handled |
@@ -93,6 +96,11 @@ coverage layer — never silently wrong.
 | Fog: linear | eye-space depth blend | ✅ yes | fog_smoke |
 | Fog: EXP / EXP2 | flagged via coverage | ❌ no | — |
 | Coverage / fallback layer | dx8wasm_get_coverage + unhandled callback | ✅ yes | coverage_smoke |
+| Anisotropic filtering | D3DTSS_MAXANISOTROPY via EXT_texture_filter_anisotropic, clamped to the device limit | ✅ yes | accepted_states_smoke |
+| Accepted-without-acting states | FILLMODE(SOLID), PATCHSEGMENTS, SOFTWAREVERTEXPROCESSING, RANGEFOGENABLE, 6x BUMPENV* — no-op with a written reason, not counted | ✅ yes | accepted_states_smoke |
+| Vertex blending (D3DFVF_XYZB1-5) | not implemented, but now instrumented so a capture can measure it | ❌ no | vertexblend_smoke |
+| Fog usage telemetry | every fog-mode transition recorded, so "fog unused" is falsifiable | ✅ yes | fogmode_smoke |
+| Determinism harness | repeatable framebuffer digest, in-process repeat + fresh-context runs | ✅ yes | determinism_smoke / scripts/determinism.mjs |
 
 ## Measured against a real target (not empirically probed)
 
@@ -133,5 +141,5 @@ as proof of non-use; several of these prove less than they might first appear to
 | Kind | Describes | Meaning |
 |---|---|---|
 | `texop` | D3DTOP_BUMPENVMAP / D3DTOP_BUMPENVMAPLUMINANCE | No unsupported texture-stage colour op was ever requested in any of the three scenarios — in particular neither bump-environment op, which is the only consumer of the six D3DTSS_BUMPENVMAT*/BUMPENVLSCALE/BUMPENVLOFFSET tokens in the table above. Those six tokens are hit (set at init) but inert without an op to consume them, so this proves the game never asked for bump-environment mapping itself. It does not prove no D3D8 title ever uses bump mapping, and it does not make the six state tokens worthless to keep tracking — a future capture that does hit the op would make them live. |
-| `rstate` | D3DRS_FOGTABLEMODE(EXP/EXP2) / D3DRS_FOGVERTEXMODE(EXP/EXP2) | No fog coverage counter fired in any of the three scenarios. The coverage layer only counts a hit when FOGTABLEMODE/FOGVERTEXMODE is set to a value other than LINEAR or NONE (runtime/d3d8webgl/device.cpp:673), so this proves EXP/EXP2 fog was never *set* by the game across these captures. It does not prove fog is unused: linear fog is implemented and a LINEAR write produces no counter either way, so this measurement cannot distinguish 'the game relies on linear fog' from 'the game never touches fog at all'. |
+| `rstate` | D3DRS_FOGTABLEMODE(EXP/EXP2) / D3DRS_FOGVERTEXMODE(EXP/EXP2) | No fog coverage counter fired in any of the three scenarios. The coverage layer only counts a hit when FOGTABLEMODE/FOGVERTEXMODE is set to a value other than LINEAR or NONE (runtime/d3d8webgl/device.cpp:673), so this proves EXP/EXP2 fog was never *set* by the game across these captures. It does not prove fog is unused: linear fog is implemented and a LINEAR write produces no counter either way, so this measurement cannot distinguish 'the game relies on linear fog' from 'the game never touches fog at all'. As of the 2026-08-01 instrumentation work this limitation is closed going forward: every fog-mode transition now emits a d3d8.fogmode.{table,vertex}.<hex> telemetry counter regardless of value, so a future capture CAN distinguish 'relies on linear fog' from 'never touches fog'. This row still reports what the 2026-07-31 capture could see, which is not that. |
 | `format` | any D3DFORMAT outside this SDK's supported set (see Texture formats table above) | No unhandled-format coverage counter fired in any of the three scenarios — every CreateTexture/LockRect(-style) format request the game made across menu, skirmish, and campaign was one this SDK already supports. This is a genuine negative result (the coverage layer does instrument format requests, at runtime/d3d8webgl/device.cpp:575,972), not an instrumentation gap: it means 'more texture formats' is not evidenced as outstanding work by this measurement, for this target. |

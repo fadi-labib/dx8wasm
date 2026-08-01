@@ -117,6 +117,62 @@ for exactly which tokens are implemented vs fall back.
 - **No blocking loop**: the browser can't block. Convert the game loop to an
   `emscripten_set_main_loop` callback.
 
+### Stubs fail loudly
+
+dx8wasm implements a subset of D3D8. Where it stops, it says so — it never returns a
+plausible-looking value it made up. Three rules hold across the whole surface:
+
+1. **A `Get*` for state the device tracks answers from that state.** `GetRenderState`,
+   `GetTextureStageState`, `GetTransform`, `GetMaterial`, `GetLight` all round-trip what you
+   set, because engines bracket passes with `Get(X,&old)` / `Set(X,temp)` / `Set(X,old)`.
+2. **Anything unimplemented returns `D3DERR_INVALIDCALL` or `D3DERR_NOTAVAILABLE`** — never
+   `D3D_OK`. That includes state blocks, shader creation, clip planes, palettes and
+   render-target switching. Expect failures and take your fallback path; do not assume success.
+3. **Capability queries derive from the same predicate the implementation uses.**
+   `CheckDeviceFormat` answers from `runtime/d3d8webgl/format_support.h`, the header the texture
+   upload path itself enforces, so caps and behaviour cannot drift apart. `D3DCAPS8` advertises
+   only what the device will actually do.
+
+Read the gaps at runtime with `dx8wasm_get_coverage` (§2) — unhandled render states, texture
+ops, stage states and formats are each counted and reported once.
+
+**Why this is a rule.** `GetRenderState` used to answer `0` for everything. Generals' stencil
+shadow pass does `GetRenderState(D3DRS_COLORWRITEENABLE, &old)` → `Set(…, 0)` → `Set(…, old)`,
+so the restore restored *zero* and colour writes stayed off for the rest of the frame. The 3D
+scene, drawn before that pass, kept appearing; the entire 2D UI, drawn after it, vanished. It
+presented as a missing menu, not as a device error — which is exactly what a stub that reports
+success buys you. A stub that fails is debuggable in minutes; one that lies is not.
+
+### Accepted without acting ≠ unimplemented
+
+A coverage counter means one thing: *this backend does not implement the token and fell back*.
+Some D3D8 states are deliberately accepted and ignored, and those must **not** count — the
+distinction is what keeps `dx8wasm_get_coverage` useful as a work list.
+
+- `D3DRS_FILLMODE(D3DFILL_SOLID)` is exactly what the backend draws, so accepting it is exact.
+  `WIREFRAME`/`POINT` still count: GLES3 has no `glPolygonMode`, so they genuinely cannot be
+  expressed.
+- `D3DRS_PATCHSEGMENTS`, `D3DRS_SOFTWAREVERTEXPROCESSING`, `D3DRS_RANGEFOGENABLE` and the six
+  `D3DTSS_BUMPENV*` states are no-ops with the reason written at each call site in
+  `runtime/d3d8webgl/device.cpp`.
+
+Why it matters: while these shared a counter with real gaps, `D3DRS_PATCHSEGMENTS` — a float bit
+pattern the engine smuggles through a render state, not a rendering request at all — was the
+most-hit token in every scenario of a real capture, outranking every genuine finding. Ranking by
+hit count is only meaningful once decisions stop being counted as gaps.
+
+When you add a no-op, write the reason at the call site and add it to `accepted_states_smoke`,
+which asserts that the accepted set moves no counter *and* that a genuinely-unexpressible token
+still does — a smoke that only checked the first half could pass by silencing everything.
+
+### Determinism seam
+
+`runtime/test/frame_digest.h` folds a `glReadPixels` into a chained FNV-1a digest.
+`determinism_smoke` uses it to prove one render sequence repeats identically in-process, and
+`scripts/determinism.mjs` (in `ci.sh`) proves the digest reproduces across fresh browser
+contexts. A game with replays extends the same pattern by digesting its own per-tick simulation
+state and comparing across runs — that is the desync check, and this is the SDK-side half of it.
+
 ---
 
 ## 1. D3D8 API — `runtime/d3d8/d3d8.h`
@@ -176,13 +232,22 @@ HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE, UINT MinIndex, UINT NumVertices,
 (0x010) | `D3DFVF_DIFFUSE` (0x040) | `D3DFVF_TEX1` (0x100). Attribute order in the
 vertex struct: position, normal, diffuse, texcoord. `XYZRHW` excludes lighting.
 
+### ABI note
+`IDirect3DDevice8` is the **complete standard vtable** (~94 methods, canonical
+order). The supported subset does real work; unimplemented methods are honest
+stubs (log-once / coverage / sensible defaults), so a game links and dispatches
+correctly. Missing *behavior* surfaces via the coverage layer, never a crash.
+
 ### What's supported
 All three light types (directional/point/spot), the full ambient+diffuse+specular
-equation, linear fog, depth/blend/cull/alpha-test render states, `MODULATE`/
-`MODULATE2X`/`MODULATE4X`/`ADD`/`ADDSIGNED`/`SELECTARG1`/`SELECTARG2` combiners,
-`A8R8G8B8`/`X8R8G8B8` textures, every primitive type. **Authoritative, current
-list: [`CONFORMANCE.md`](CONFORMANCE.md).** Anything not listed falls back and is
-counted — see the coverage API below.
+equation, **lit + textured** geometry, linear fog, the common depth/blend/cull/
+alpha-test/z-func render states, `MODULATE`/`MODULATE2X`/`MODULATE4X`/`ADD`/
+`ADDSIGNED`/`SELECTARG1`/`SELECTARG2` stage-0 combiners, `A8R8G8B8`/`X8R8G8B8`
+textures, every primitive type, and indexed / non-indexed / **user-pointer**
+(`DrawPrimitiveUP`/`DrawIndexedPrimitiveUP`) draws. **Authoritative, current list:
+[`CONFORMANCE.md`](CONFORMANCE.md).** Not-yet-supported (grows against the game):
+a second texture stage, more formats, `.pso` pixel shaders — anything unlisted
+falls back and is counted.
 
 ---
 
@@ -553,7 +618,7 @@ Scope: the fixed-function subset a DirectX-8 game (target: C&C Generals) needs.
 "fallback" means the token is safely ignored/substituted and logged via the
 coverage layer — never silently wrong.
 
-## Render states (17/20 handled)
+## Render states (25/29 handled)
 
 | State | Status |
 |-------|--------|
@@ -576,7 +641,16 @@ coverage layer — never silently wrong.
 | `D3DRS_FOGTABLEMODE(LINEAR)` | ✅ handled |
 | `D3DRS_FOGTABLEMODE(EXP)` | ⚠️ fallback |
 | `D3DRS_FOGDENSITY` | ⚠️ fallback |
-| `D3DRS_FILLMODE` | ⚠️ fallback |
+| `D3DRS_FILLMODE(SOLID)` | ✅ handled |
+| `D3DRS_FILLMODE(WIREFRAME)` | ⚠️ fallback |
+| `D3DRS_SPECULARMATERIALSOURCE(MATERIAL)` | ✅ handled |
+| `D3DRS_SPECULARMATERIALSOURCE(COLOR2)` | ⚠️ fallback |
+| `D3DRS_ZFUNC` | ✅ handled |
+| `D3DRS_DITHERENABLE` | ✅ handled |
+| `D3DRS_ZBIAS` | ✅ handled |
+| `D3DRS_SHADEMODE` | ✅ handled |
+| `D3DRS_STENCILENABLE` | ✅ handled |
+| `D3DRS_TEXTUREFACTOR` | ✅ handled |
 
 ## Texture-stage color ops (6/6 handled)
 
@@ -589,29 +663,40 @@ coverage layer — never silently wrong.
 | `D3DTOP_MODULATE2X` | ✅ handled |
 | `D3DTOP_ADDSIGNED` | ✅ handled |
 
-## Texture formats (2/5 handled)
+## Texture formats (5/5 handled)
 
 | Format | Status |
 |--------|--------|
 | `D3DFMT_A8R8G8B8` | ✅ handled |
 | `D3DFMT_X8R8G8B8` | ✅ handled |
-| `D3DFMT_R5G6B5` | ⚠️ fallback |
-| `D3DFMT_A8` | ⚠️ fallback |
-| `D3DFMT_DXT1` | ⚠️ fallback |
+| `D3DFMT_R5G6B5` | ✅ handled |
+| `D3DFMT_A8` | ✅ handled |
+| `D3DFMT_DXT1` | ✅ handled |
 
 ## Feature coverage
 
 | Feature | Notes | Status | Verified by |
 |---------|-------|--------|-------------|
-| Device / present | Direct3DCreate8, CreateDevice, Clear, Present | ✅ yes | d3d8_smoke |
+| COM ABI | full IDirect3DDevice8 vtable (~94 methods, canonical order); rest stubbed->coverage | ✅ yes | abi_smoke |
+| Device / present | Direct3DCreate8, CreateDevice, Clear, Present, Begin/EndScene, Reset | ✅ yes | d3d8_smoke / abi_smoke |
 | Vertex/index buffers | CreateVertexBuffer/IndexBuffer, Lock/Unlock, SetStreamSource, SetIndices | ✅ yes | draw_smoke |
 | FVF: XYZ / NORMAL / DIFFUSE / TEX1 | attribute layout in FVF order | ✅ yes | draw_smoke / light_smoke |
 | FVF: XYZRHW (pre-transformed) | screen-space UI/HUD vertices (rhw=1) | ✅ yes | rhw_smoke |
-| FVF: SPECULAR, multi-texcoord | extra colour / texcoord sets | ❌ no | — |
-| DrawIndexedPrimitive: all primitive types | list/strip/fan, lines, points | ✅ yes | draw_smoke / strip_smoke |
+| FVF: SPECULAR | stride honored so uv offsets stay correct; the colour itself is dropped | 🟡 partial | draw_smoke |
+| FVF: multi-texcoord (TEX2) | second uv set feeds stage 1 (attribute location 4) | ✅ yes | lit_tex_smoke |
+| Draw: indexed + non-indexed + user-pointer | DrawIndexedPrimitive/DrawPrimitive/DrawPrimitiveUP/DrawIndexedPrimitiveUP, all topologies | ✅ yes | draw_smoke / strip_smoke / drawup_smoke |
 | Transforms: WORLD / VIEW / PROJECTION | row-major uploaded transposed | ✅ yes | draw_smoke |
-| Textures: A8R8G8B8 + LockRect | level 0, nearest, clamp | ✅ yes | draw_tex_smoke |
-| Texture combiners: MODULATE, SELECTARG1 | stage-0 color op | ✅ yes | draw_tex_smoke |
+| Textures: LockRect upload | full mip chain; per-stage filter + address state honored | ✅ yes | draw_tex_smoke |
+| Texture combiners (stage 0) | MODULATE/2X/4X, ADD, ADDSIGNED, SELECTARG1/2 | ✅ yes | draw_tex_smoke / combiner_smoke |
+| Texture formats: 16-bit + DXT1 | A4R4G4B4/R5G6B5/A8/L8 decode + S3TC block upload | ✅ yes | texfmt_smoke / dxt_smoke |
+| Surfaces | GetSurfaceLevel, CreateImageSurface, CopyRects, UpdateTexture | ✅ yes | surface_smoke |
+| Material colour source | D3DRS_{DIFFUSE,AMBIENT,EMISSIVE}MATERIALSOURCE + D3DRS_COLORVERTEX | ✅ yes | matsource_smoke |
+| World-space normals | normal matrix follows a non-identity world transform | ✅ yes | normal_smoke |
+| Honest stubs | unimplemented entry points refuse; caps derive from the implementation | ✅ yes | honest_stubs_smoke / caps_query_smoke |
+| Telemetry ring | NDJSON spans + coalesced counters, drop-accounted | ✅ yes | telemetry_smoke |
+| compatlib Tiers 0-3 | timing, file/dir/memory, module/thread/registry, D3DX math | ✅ yes | compat_smoke / compat_file_smoke / compat_sys_smoke / compat_d3dx_smoke |
+| Lit + textured geometry | lit color modulated by stage-0 texture (terrain/units) | ✅ yes | lit_tex_smoke |
+| Second texture stage | multi-texture (base + lightmap/detail); stages 0-1 chained in the combiner | ✅ yes | lit_tex_smoke / combiner_smoke |
 | Render states: depth / blend / cull / alpha-test | the common subset | ✅ yes | render_state_smoke |
 | Lighting: directional / point / spot | all three D3DLIGHT types | ✅ yes | light/point/spot_light_smoke |
 | Lighting: ambient + diffuse + specular | full FF equation (infinite viewer) | ✅ yes | light/specular_smoke |
@@ -619,3 +704,50 @@ coverage layer — never silently wrong.
 | Fog: linear | eye-space depth blend | ✅ yes | fog_smoke |
 | Fog: EXP / EXP2 | flagged via coverage | ❌ no | — |
 | Coverage / fallback layer | dx8wasm_get_coverage + unhandled callback | ✅ yes | coverage_smoke |
+| Anisotropic filtering | D3DTSS_MAXANISOTROPY via EXT_texture_filter_anisotropic, clamped to the device limit | ✅ yes | accepted_states_smoke |
+| Accepted-without-acting states | FILLMODE(SOLID), PATCHSEGMENTS, SOFTWAREVERTEXPROCESSING, RANGEFOGENABLE, 6x BUMPENV* — no-op with a written reason, not counted | ✅ yes | accepted_states_smoke |
+| Vertex blending (D3DFVF_XYZB1-5) | not implemented, but now instrumented so a capture can measure it | ❌ no | vertexblend_smoke |
+| Fog usage telemetry | every fog-mode transition recorded, so "fog unused" is falsifiable | ✅ yes | fogmode_smoke |
+| Determinism harness | repeatable framebuffer digest, in-process repeat + fresh-context runs | ✅ yes | determinism_smoke / scripts/determinism.mjs |
+
+## Measured against a real target (not empirically probed)
+
+**This is a capture, not a probe — do not read it as an empirically probed row.**
+Every table above is produced by this repo's own conformance program setting each
+token on a live device and reading its own coverage counters back, so it cannot
+drift from what the runtime does. The table below instead reports what one real
+game's telemetry recorded it asking for during real play — a measurement taken
+outside this repo and hand-copied in via `docs/measured-gap.json`. A row here
+says "a target hit this token N times", never "this SDK's probe confirmed this".
+
+Measured against **C&C Generals Zero Hour**, scenarios: menu, skirmish, campaign.
+Source: `generals-dx8wasm/docs/D3D8-MEASURED-GAP.md` @ `35b619cbebf2`
+(commit dated 2026-07-31T11:34:01+02:00). This is a capture, not a probe: three real-GPU playthroughs read the SDK's own d3d8.unhandled.<kind>.<hex> coverage counters via NDJSON telemetry. Each scenario's numbers were accepted only after asserting malformed === 0 and a contiguous seq range. The skirmish scenario's numbers were transcribed from a prior run's stdout (not re-captured for the source doc's final pass) — see the source doc's per-scenario provenance notes; menu and campaign were captured live for that doc. Counts are a floor, not an exact total: the coverage layer's per-token tally can leave up to ~1s of trailing activity unflushed at capture end (source doc caveat #2).
+
+| Token | Standard D3D8 name | Total hits (all scenarios) | Disposition | Why |
+|---|---|---|---|---|
+| `d3d8.unhandled.rstate.000000a4` | D3DRS_PATCHSEGMENTS *(not declared in this SDK's `d3d8.h`)* | 40138 | No-op (documented) | N-patch tessellation segment count. W3D smuggles a float bit-pattern through this render state as a side channel (engine/GeneralsX/.../WW3D2/shader.cpp:1036) rather than requesting tessellation; WebGL2 has no tessellation stage to implement against. Most-hit token in every scenario, but hit count reflects call-site frequency, not desirability — implementing it is not the right action. |
+| `d3d8.unhandled.rstate.00000008` | D3DRS_FILLMODE | 19392 | Implement | Fill mode (solid/wireframe/point). Cheap and expressible; the path that matters wants D3DFILL_SOLID, already what the SDK draws. Coupled to runtime/test/coverage_smoke.cpp, which deliberately uses this token as its stable-unimplemented probe — implementing it requires re-pointing that smoke at a still-unimplemented token in the same change. |
+| `d3d8.unhandled.rstate.00000099` | D3DRS_SOFTWAREVERTEXPROCESSING *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Device-pipeline mode switch (software vs hardware vertex processing). The SDK has exactly one vertex path (GLSL on the GPU) and no software fallback to switch to; nothing to implement. |
+| `d3d8.unhandled.rstate.00000030` | D3DRS_RANGEFOGENABLE *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Range-based fog enable, set twice at init and never again — almost certainly the engine writing D3D8's own FALSE default during a blanket state reset (the coverage layer records the token, not the value, so this is inferred, not measured). If range fog is ever genuinely enabled, it is expressible via the SDK's existing shader-emulated fog and should move to implement. |
+| `d3d8.unhandled.rstate.00000092` | D3DRS_SPECULARMATERIALSOURCE | 6 | Implement | Already declared in this SDK's d3d8.h; only the handler is missing. Set twice at init (costs nothing at runtime) — part of the known D3DFVF_SPECULAR / specular-lighting gap, to be picked up with that slice rather than separately. |
+| `d3d8.unhandled.tsstate.00000007` | D3DTSS_BUMPENVMAT00 *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment matrix element. Inert without the D3DTOP_BUMPENVMAP/BUMPENVMAPLUMINANCE colour ops that consume it, and no texop token appears anywhere in this measurement, so the game never asked for bump mapping itself. Written as part of a blanket stage-state reset at device init. Implementing the matrix without the op would be dead code; the op — not this — is what would have to arrive first. |
+| `d3d8.unhandled.tsstate.00000008` | D3DTSS_BUMPENVMAT01 *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment matrix element; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+| `d3d8.unhandled.tsstate.00000009` | D3DTSS_BUMPENVMAT10 *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment matrix element; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+| `d3d8.unhandled.tsstate.0000000a` | D3DTSS_BUMPENVMAT11 *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment matrix element; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+| `d3d8.unhandled.tsstate.00000015` | D3DTSS_MAXANISOTROPY *(not declared in this SDK's `d3d8.h`)* | 6 | Implement | A plain sampler parameter, not a pipeline feature. Maps directly onto EXT_texture_filter_anisotropic's TEXTURE_MAX_ANISOTROPY_EXT where present, clamps to 1 where absent. Only init-time hits (6 total), so a small texture-quality win rather than a hot-path fix — but this project has already been bitten once by empty texture-filter caps producing blocky textures. |
+| `d3d8.unhandled.tsstate.00000016` | D3DTSS_BUMPENVLSCALE *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment luminance scale; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+| `d3d8.unhandled.tsstate.00000017` | D3DTSS_BUMPENVLOFFSET *(not declared in this SDK's `d3d8.h`)* | 6 | No-op (documented) | Bump-environment luminance offset; see D3DTSS_BUMPENVMAT00's reason (same group, same blanket init reset, same missing prerequisite op). |
+
+### Zero-hit findings
+
+These are also measured, not probed — but instead of "this token fired N times",
+each row here is "this coverage-instrumented token/op/format never fired at all,
+in any of the three scenarios". Read each row's own caveat before treating a zero
+as proof of non-use; several of these prove less than they might first appear to.
+
+| Kind | Describes | Meaning |
+|---|---|---|
+| `texop` | D3DTOP_BUMPENVMAP / D3DTOP_BUMPENVMAPLUMINANCE | No unsupported texture-stage colour op was ever requested in any of the three scenarios — in particular neither bump-environment op, which is the only consumer of the six D3DTSS_BUMPENVMAT*/BUMPENVLSCALE/BUMPENVLOFFSET tokens in the table above. Those six tokens are hit (set at init) but inert without an op to consume them, so this proves the game never asked for bump-environment mapping itself. It does not prove no D3D8 title ever uses bump mapping, and it does not make the six state tokens worthless to keep tracking — a future capture that does hit the op would make them live. |
+| `rstate` | D3DRS_FOGTABLEMODE(EXP/EXP2) / D3DRS_FOGVERTEXMODE(EXP/EXP2) | No fog coverage counter fired in any of the three scenarios. The coverage layer only counts a hit when FOGTABLEMODE/FOGVERTEXMODE is set to a value other than LINEAR or NONE (runtime/d3d8webgl/device.cpp:673), so this proves EXP/EXP2 fog was never *set* by the game across these captures. It does not prove fog is unused: linear fog is implemented and a LINEAR write produces no counter either way, so this measurement cannot distinguish 'the game relies on linear fog' from 'the game never touches fog at all'. As of the 2026-08-01 instrumentation work this limitation is closed going forward: every fog-mode transition now emits a d3d8.fogmode.{table,vertex}.<hex> telemetry counter regardless of value, so a future capture CAN distinguish 'relies on linear fog' from 'never touches fog'. This row still reports what the 2026-07-31 capture could see, which is not that. |
+| `format` | any D3DFORMAT outside this SDK's supported set (see Texture formats table above) | No unhandled-format coverage counter fired in any of the three scenarios — every CreateTexture/LockRect(-style) format request the game made across menu, skirmish, and campaign was one this SDK already supports. This is a genuine negative result (the coverage layer does instrument format requests, at runtime/d3d8webgl/device.cpp:575,972), not an instrumentation gap: it means 'more texture formats' is not evidenced as outstanding work by this measurement, for this target. |

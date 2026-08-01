@@ -75,6 +75,11 @@ const features = [
   ['Fog: linear', 'eye-space depth blend', 'yes', 'fog_smoke'],
   ['Fog: EXP / EXP2', 'flagged via coverage', 'no', '—'],
   ['Coverage / fallback layer', 'dx8wasm_get_coverage + unhandled callback', 'yes', 'coverage_smoke'],
+  ['Anisotropic filtering', 'D3DTSS_MAXANISOTROPY via EXT_texture_filter_anisotropic, clamped to the device limit', 'yes', 'accepted_states_smoke'],
+  ['Accepted-without-acting states', 'FILLMODE(SOLID), PATCHSEGMENTS, SOFTWAREVERTEXPROCESSING, RANGEFOGENABLE, 6x BUMPENV* — no-op with a written reason, not counted', 'yes', 'accepted_states_smoke'],
+  ['Vertex blending (D3DFVF_XYZB1-5)', 'not implemented, but now instrumented so a capture can measure it', 'no', 'vertexblend_smoke'],
+  ['Fog usage telemetry', 'every fog-mode transition recorded, so "fog unused" is falsifiable', 'yes', 'fogmode_smoke'],
+  ['Determinism harness', 'repeatable framebuffer digest, in-process repeat + fresh-context runs', 'yes', 'determinism_smoke / scripts/determinism.mjs'],
 ];
 
 const mark = (h) => (h ? '✅ handled' : '⚠️ fallback');
