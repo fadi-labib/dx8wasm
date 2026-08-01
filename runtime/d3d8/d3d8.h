@@ -60,6 +60,16 @@ using REFIID = const GUID&;
 #define D3DFVF_TEXCOUNT_MASK  0x0f00u
 #define D3DFVF_TEXCOUNT_SHIFT 8u
 
+// Position type lives in bits 1-3 as a value, not as independent flags: XYZ and XYZRHW are two
+// of eight encodings, and XYZB1-5 are five more (blend-weight counts 1..5). Masking with
+// POSITION_MASK is the only correct way to ask "which position type is this".
+#define D3DFVF_POSITION_MASK 0x0000000eu
+#define D3DFVF_XYZB1    0x0006u
+#define D3DFVF_XYZB2    0x0008u
+#define D3DFVF_XYZB3    0x000au
+#define D3DFVF_XYZB4    0x000cu
+#define D3DFVF_XYZB5    0x000eu
+
 // --- Enums (values are the public API; enums may be sparse) ------------------
 enum D3DDEVTYPE { D3DDEVTYPE_HAL = 1, D3DDEVTYPE_REF = 2, D3DDEVTYPE_SW = 3 };
 enum D3DFORMAT {

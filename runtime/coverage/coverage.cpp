@@ -17,7 +17,7 @@ void* g_user = nullptr;
 bool g_logging = true;       // gated by dx8wasm_init(log_unimplemented)
 std::set<uint64_t> g_seen;   // distinct (family, value) already reported
 
-enum Family { RS = 0, TOP = 1, FMT = 2, TSS = 3 };
+enum Family { RS = 0, TOP = 1, FMT = 2, TSS = 3, FVF = 4 };
 
 // Telemetry key kinds, one per Family above, tied together with the array below by
 // a static_assert rather than by convention — a fifth Family with no matching
@@ -26,8 +26,10 @@ enum Family { RS = 0, TOP = 1, FMT = 2, TSS = 3 };
 #define DX8WASM_KIND_TEXOP   "texop"
 #define DX8WASM_KIND_FORMAT  "format"
 #define DX8WASM_KIND_TSSTATE "tsstate"
-const char* const kTelKind[] = {DX8WASM_KIND_RSTATE, DX8WASM_KIND_TEXOP, DX8WASM_KIND_FORMAT, DX8WASM_KIND_TSSTATE};
-static_assert(sizeof kTelKind / sizeof *kTelKind == TSS + 1,
+#define DX8WASM_KIND_FVF     "fvf"
+const char* const kTelKind[] = {DX8WASM_KIND_RSTATE, DX8WASM_KIND_TEXOP, DX8WASM_KIND_FORMAT,
+                                DX8WASM_KIND_TSSTATE, DX8WASM_KIND_FVF};
+static_assert(sizeof kTelKind / sizeof *kTelKind == FVF + 1,
               "kTelKind must have exactly one entry per Family enumerator");
 
 // Key format is "d3d8.unhandled.<kind>.<value>", value written as fixed-width hex
@@ -58,6 +60,7 @@ static_assert(sizeof(DX8WASM_KIND_RSTATE)  - 1 <= kTelKindMaxLen, DX8WASM_KIND_R
 static_assert(sizeof(DX8WASM_KIND_TEXOP)   - 1 <= kTelKindMaxLen, DX8WASM_KIND_TEXOP   " exceeds the per-kind budget");
 static_assert(sizeof(DX8WASM_KIND_FORMAT)  - 1 <= kTelKindMaxLen, DX8WASM_KIND_FORMAT  " exceeds the per-kind budget");
 static_assert(sizeof(DX8WASM_KIND_TSSTATE) - 1 <= kTelKindMaxLen, DX8WASM_KIND_TSSTATE " exceeds the per-kind budget");
+static_assert(sizeof(DX8WASM_KIND_FVF) - 1 <= kTelKindMaxLen, DX8WASM_KIND_FVF " exceeds the per-kind budget");
 
 // --- Per-token telemetry tally --------------------------------------------------
 //
@@ -277,6 +280,7 @@ void unhandled_render_state(uint32_t s) { note(RS,  "D3DRS",  s, g_counts.unhand
 void unhandled_texture_op(uint32_t o)   { note(TOP, "D3DTOP", o, g_counts.unhandled_texture_stage_ops); }
 void unhandled_format(uint32_t f)       { note(FMT, "D3DFMT", f, g_counts.unhandled_formats); }
 void unhandled_stage_state(uint32_t t)  { note(TSS, "D3DTSS", t, g_counts.unhandled_texture_stage_states); }
+void unhandled_vertex_format(uint32_t p) { note(FVF, "D3DFVF", p, g_counts.unhandled_vertex_formats); }
 void set_logging(bool on) { g_logging = on; }
 } // namespace coverage
 

@@ -615,7 +615,18 @@ struct Device8 : IDirect3DDevice8 {
     if (n) n->AddRef(); if (indices) indices->Release();
     indices = n; baseVertexIndex = BaseVertexIndex; return D3D_OK;
   }
-  HRESULT SetVertexShader(DWORD Handle) override { fvf = Handle; return D3D_OK; }
+  HRESULT SetVertexShader(DWORD Handle) override {
+    // bind_pipeline binds position as 3 floats (XYZ) or 4 (XYZRHW). A blended position carries
+    // 1-5 extra blend weights, so binding it either way mis-reads every vertex — and until this
+    // report existed there was no instrument for it anywhere, which is why the Generals
+    // measurement could not say whether the engine uses it. Keyed on the position mask, so the
+    // key space is the five blend widths rather than one key per FVF combination.
+    const DWORD pos = Handle & D3DFVF_POSITION_MASK;
+    if (pos != D3DFVF_XYZ && pos != D3DFVF_XYZRHW && pos != 0)
+      coverage::unhandled_vertex_format(pos);
+    fvf = Handle;
+    return D3D_OK;
+  }
   HRESULT SetTexture(DWORD Stage, IDirect3DBaseTexture8* t) override {
     auto* n = static_cast<Texture8*>(t);
     Texture8** slot = Stage == 0 ? &texture : (Stage == 1 ? &texture1 : nullptr);

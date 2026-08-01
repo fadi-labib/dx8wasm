@@ -64,6 +64,11 @@ typedef struct {
     // Without this the stage-state path could drop tokens with no trace, while the render-state
     // path reported its gaps — so the conformance matrix under-reported what was missing.
     uint32_t unhandled_texture_stage_states;
+    // Appended (keeps existing offsets): D3DFVF_XYZB1-5 blended-position formats, which
+    // bind_pipeline cannot express. Vertex blending rides the FVF position bits rather than a
+    // D3DRS_*/D3DTSS_* token, so before this counter existed its absence from a capture proved
+    // nothing at all — see docs/measured-gap.json's "does not speak to it" note.
+    uint32_t unhandled_vertex_formats;
 } dx8wasm_coverage;
 
 // Thread-affinity contract: safe to call from any thread, including one other

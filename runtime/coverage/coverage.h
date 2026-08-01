@@ -11,6 +11,7 @@ void unhandled_render_state(uint32_t state);
 void unhandled_texture_op(uint32_t op);
 void unhandled_stage_state(uint32_t type);   // a D3DTSS_* the device does not implement
 void unhandled_format(uint32_t fmt);
+void unhandled_vertex_format(uint32_t positionBits);   // a D3DFVF_XYZB* the device cannot bind
 void set_logging(bool on);   // dx8wasm_init(log_unimplemented) gates the stderr logging
 }
 #endif
