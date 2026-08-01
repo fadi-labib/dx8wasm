@@ -507,6 +507,9 @@ struct Device8 : IDirect3DDevice8 {
   // honoring COLOR1 here is what stops lit geometry blowing out to full white.
   bool colorVertex = true;
   uint32_t diffuseSource = D3DMCS_COLOR1, ambientSource = D3DMCS_MATERIAL, emissiveSource = D3DMCS_MATERIAL;
+  // D3D8's own default is COLOR2, but this backend does not upload D3DFVF_SPECULAR as an
+  // attribute, so MATERIAL is the honest default: it is what the shader actually reads.
+  uint32_t specularSource = D3DMCS_MATERIAL;
   float globalAmbient[4] = {0, 0, 0, 0};
   D3DLIGHT8 lights[ff::MAX_LIGHTS]{};
   bool lightOn[ff::MAX_LIGHTS] = {false};
@@ -693,6 +696,13 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_DIFFUSEMATERIALSOURCE:  diffuseSource = Value; break;
       case D3DRS_AMBIENTMATERIALSOURCE:  ambientSource = Value; break;
       case D3DRS_EMISSIVEMATERIALSOURCE: emissiveSource = Value; break;
+      case D3DRS_SPECULARMATERIALSOURCE:
+        // COLOR2 would read the specular vertex colour, which is not an attribute here (see the
+        // D3DFVF_SPECULAR skip in bind_pipeline) — report that value rather than pretend, and
+        // keep sourcing from the material so specular stays correct instead of going black.
+        if (Value == D3DMCS_COLOR2) coverage::unhandled_render_state(State);
+        else specularSource = Value;
+        break;
       case D3DRS_SPECULARENABLE:   specularEnable = Value != 0; break;
       case D3DRS_FOGENABLE:        fogEnable = Value != 0; break;
       case D3DRS_FOGSTART:         fogStart = as_float(Value); break;
@@ -888,6 +898,9 @@ struct Device8 : IDirect3DDevice8 {
     key.diffFromVertex = lit && cvOn && diffuseSource == D3DMCS_COLOR1;
     key.ambFromVertex  = lit && cvOn && ambientSource == D3DMCS_COLOR1;
     key.emisFromVertex = lit && cvOn && emissiveSource == D3DMCS_COLOR1;
+    // COLOR1 is the only vertex source available (there is no specular attribute), so this is
+    // the one non-material case the shader can express.
+    key.specFromVertex = lit && cvOn && specularSource == D3DMCS_COLOR1;
     for (int s = 0; s < 2; s++) {
       const StageState& ss = stageState[s];
       Texture8* stex = s == 0 ? texture : texture1;

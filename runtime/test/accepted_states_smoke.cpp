@@ -41,10 +41,22 @@ int main() {
   dev->SetTextureStageState(0, D3DTSS_MAXANISOTROPY, 4);
   if (total() != before) { report_error("D3DTSS_MAXANISOTROPY was counted as unhandled"); return 1; }
 
+  // The fourth material-colour source. MATERIAL and COLOR1 are answerable from state the device
+  // already tracks, so they must not count.
+  dev->SetRenderState(D3DRS_SPECULARMATERIALSOURCE, D3DMCS_MATERIAL);
+  dev->SetRenderState(D3DRS_SPECULARMATERIALSOURCE, D3DMCS_COLOR1);
+  if (total() != before) { report_error("a handled SPECULARMATERIALSOURCE value was counted"); return 1; }
+
   // --- Genuinely unimplemented: the counter MUST move. ---
   // GLES3 has no glPolygonMode, so wireframe cannot be expressed and must keep reporting.
   dev->SetRenderState(D3DRS_FILLMODE, D3DFILL_WIREFRAME);
   if (total() != before + 1) { report_error("D3DFILL_WIREFRAME stopped being reported"); return 1; }
+
+  // COLOR2 sources the specular colour from D3DFVF_SPECULAR, which is not uploaded as an
+  // attribute (device.cpp skips its stride to keep texcoord offsets correct). It must keep
+  // reporting — specifically, so a future capture that uses it says so instead of going quiet.
+  dev->SetRenderState(D3DRS_SPECULARMATERIALSOURCE, D3DMCS_COLOR2);
+  if (total() != before + 2) { report_error("SPECULARMATERIALSOURCE(COLOR2) was silently accepted"); return 1; }
 
   // Rendering must still work after both.
   dev->Clear(0, nullptr, D3DCLEAR_TARGET, 0xFF3366CCu, 1.0f, 0);
