@@ -228,6 +228,12 @@ target_link_libraries(compat_d3dx_smoke PRIVATE dx8_compat)
 target_link_options(compat_d3dx_smoke PRIVATE ${DX8_WEBGL_LINK})
 set_target_properties(compat_d3dx_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(determinism_smoke runtime/test/determinism_smoke.cpp)
+target_include_directories(determinism_smoke PRIVATE runtime runtime/d3d8 runtime/include runtime/test)
+target_link_libraries(determinism_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(determinism_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(determinism_smoke PROPERTIES SUFFIX ".js")
+
 # Integration example: a real game plugs in exactly like this (contract + D3D8).
 add_executable(minigame examples/minigame/minigame.cpp)
 target_include_directories(minigame PRIVATE runtime runtime/d3d8 runtime/include)
