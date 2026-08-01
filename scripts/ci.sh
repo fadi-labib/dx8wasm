@@ -25,4 +25,7 @@ echo "== web-runtime suite (gaxd, loader, onboard) =="
 echo "== phase2 GPU smokes =="
 node web-runtime/test/phase2.gpu.test.mjs
 
+echo "== determinism harness =="
+node scripts/determinism.mjs
+
 echo "ALL GREEN"
