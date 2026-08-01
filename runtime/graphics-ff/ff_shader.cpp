@@ -199,8 +199,10 @@ Program build(const Key& k) {
     vs += k.ambFromVertex  ? "  vec3 matAmb = aColor.bgr;\n"   : "  vec3 matAmb = uMatAmbient.rgb;\n";
     vs += k.emisFromVertex ? "  vec3 matEmis = aColor.bgr;\n"  : "  vec3 matEmis = uMatEmissive.rgb;\n";
     vs +=
-      "  vec4 c = vec4(matEmis + matAmb*(uGlobalAmbient.rgb + asum.rgb) + matDiff.rgb*dsum.rgb, matDiff.a);\n"
-      "  c.rgb += (uMatSpecular * ssum).rgb;\n"
+      "  vec4 c = vec4(matEmis + matAmb*(uGlobalAmbient.rgb + asum.rgb) + matDiff.rgb*dsum.rgb, matDiff.a);\n";
+    vs += k.specFromVertex ? "  vec4 matSpec = aColor.bgra;\n" : "  vec4 matSpec = uMatSpecular;\n";
+    vs +=
+      "  c.rgb += (matSpec * ssum).rgb;\n"
       "  vColor = clamp(c, 0.0, 1.0);\n";
   }
   else if (hasDiffuse) vs += "  vColor = aColor.bgra;\n";
@@ -309,7 +311,8 @@ uint64_t hash_key(const Key& k) {
   put(k.fvf);
   put(k.alphaFunc);
   put((k.lit ? 1u : 0u) | (k.fog ? 2u : 0u)
-      | (k.diffFromVertex ? 4u : 0u) | (k.ambFromVertex ? 8u : 0u) | (k.emisFromVertex ? 16u : 0u));
+      | (k.diffFromVertex ? 4u : 0u) | (k.ambFromVertex ? 8u : 0u) | (k.emisFromVertex ? 16u : 0u)
+      | (k.specFromVertex ? 32u : 0u));
   for (int s = 0; s < 2; s++) {
     const Stage& st = k.stage[s];
     put(st.colorOp); put(st.colorArg1); put(st.colorArg2);

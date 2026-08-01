@@ -39,6 +39,7 @@ const SMOKES = [
   // delta 3 (not three records of delta 1), so this slot cannot pass on a false
   // coalescing report by riding another slot's value or the ±2 tolerance below.
   ['coverage_smoke', [5, 1, 4, 1]],
+  ['accepted_states_smoke', [1, 0, 0, 255]],   // accepted-without-acting states don't count; unexpressible ones still do
   ['caps_query_smoke', [1, 0, 0, 255]],        // capability queries agree with the texture path
   ['honest_stubs_smoke', [1, 0, 0, 255]],      // unimplemented entry points refuse, never lie
   ['telemetry_smoke', [3, 1, 1, 1]],           // ring: 3 lines, span ms exact, post-flood drain exact+dropped>0, fully drained after

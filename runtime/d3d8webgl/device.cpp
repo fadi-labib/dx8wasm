@@ -9,6 +9,7 @@
 #include "graphics-ff/ff_shader.h"
 #include "coverage/coverage.h"
 #include <GLES3/gl3.h>
+#include <emscripten/html5.h>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -23,6 +24,27 @@ extern "C" void dx8wasm_debug_counts(long* draws, long* bindfail, long* clears) 
 }
 
 namespace {
+
+// EXT_texture_filter_anisotropic, resolved once. WebGL requires an extension to be *enabled*
+// on the context before its tokens do anything, which is why this goes through
+// emscripten_webgl_enable_extension rather than just calling glTexParameterf and hoping.
+// Returns the device's max anisotropy, or 0 when the extension is unavailable — 0 reads as
+// "no anisotropy possible", never as "1x was requested".
+constexpr GLenum kTextureMaxAnisotropyExt = 0x84FE;
+constexpr GLenum kMaxTextureMaxAnisotropyExt = 0x84FF;
+float aniso_limit() {
+  static float limit = -1.0f;
+  if (limit >= 0.0f) return limit;
+  limit = 0.0f;
+  if (emscripten_webgl_enable_extension(emscripten_webgl_get_current_context(),
+                                        "EXT_texture_filter_anisotropic")) {
+    GLfloat max = 0.0f;
+    glGetFloatv(kMaxTextureMaxAnisotropyExt, &max);
+    if (max > 1.0f) limit = max;
+  }
+  return limit;
+}
+
 void warn_once(const char* what) {   // one line per distinct unimplemented method
   static const char* seen[64]; static int n = 0;
   for (int i = 0; i < n; i++) if (seen[i] == what) return;
@@ -463,11 +485,12 @@ struct Device8 : IDirect3DDevice8 {
     // bilinear/trilinear with wrapping; D3D's own POINT/WRAP default would look
     // blocky). The engine overrides per stage (e.g. terrain sets CLAMP).
     uint32_t minFilter, magFilter, mipFilter, addressU, addressV;
+    uint32_t maxAniso;   // D3DTSS_MAXANISOTROPY; 1 = isotropic, D3D8's own default
   } stageState[2] = {
     { D3DTOP_MODULATE, D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_SELECTARG1, D3DTA_TEXTURE, D3DTA_CURRENT, 0, 0, 0,
-      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP },
+      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP, 1 },
     { D3DTOP_DISABLE,  D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_DISABLE,    D3DTA_TEXTURE, D3DTA_CURRENT, 1, 0, 0,
-      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP },
+      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP, 1 },
   };
   float texMat[2][16];                       // D3DTS_TEXTURE0 / D3DTS_TEXTURE0+1 (row-major, uploaded as-is)
   float texFactor[4] = {0, 0, 0, 0};         // D3DRS_TEXTUREFACTOR as RGBA floats
@@ -484,6 +507,9 @@ struct Device8 : IDirect3DDevice8 {
   // honoring COLOR1 here is what stops lit geometry blowing out to full white.
   bool colorVertex = true;
   uint32_t diffuseSource = D3DMCS_COLOR1, ambientSource = D3DMCS_MATERIAL, emissiveSource = D3DMCS_MATERIAL;
+  // D3D8's own default is COLOR2, but this backend does not upload D3DFVF_SPECULAR as an
+  // attribute, so MATERIAL is the honest default: it is what the shader actually reads.
+  uint32_t specularSource = D3DMCS_MATERIAL;
   float globalAmbient[4] = {0, 0, 0, 0};
   D3DLIGHT8 lights[ff::MAX_LIGHTS]{};
   bool lightOn[ff::MAX_LIGHTS] = {false};
@@ -630,7 +656,18 @@ struct Device8 : IDirect3DDevice8 {
       case D3DTSS_MIPFILTER: s.mipFilter = Value; break;
       case D3DTSS_ADDRESSU:  s.addressU  = Value; break;
       case D3DTSS_ADDRESSV:  s.addressV  = Value; break;
-      // Report rather than swallow, matching SetRenderState. Anisotropy and LOD bias arrive
+      case D3DTSS_MAXANISOTROPY: s.maxAniso = Value ? Value : 1; break;
+      // Bump-environment matrix + luminance scale/offset, written as part of the engine's
+      // blanket stage-state reset at device init. Inert without D3DTOP_BUMPENVMAP or
+      // D3DTOP_BUMPENVMAPLUMINANCE to consume them, and neither op appears anywhere in the
+      // measurement (docs/measured-gap.json zero-hit findings) — the game never asked for bump
+      // mapping itself. Implementing the matrix without the op would be dead code. The op stays
+      // unimplemented and therefore still reported, so this stays discoverable if it ever lands.
+      case D3DTSS_BUMPENVMAT00: case D3DTSS_BUMPENVMAT01:
+      case D3DTSS_BUMPENVMAT10: case D3DTSS_BUMPENVMAT11:
+      case D3DTSS_BUMPENVLSCALE: case D3DTSS_BUMPENVLOFFSET:
+        break;
+      // Report rather than swallow, matching SetRenderState. MAXMIPLEVEL and LOD bias arrive
       // here and would otherwise vanish without ever showing up in the conformance matrix.
       default: coverage::unhandled_stage_state(Type); break;
     }
@@ -650,6 +687,13 @@ struct Device8 : IDirect3DDevice8 {
         if (Value) { glPolygonOffset(-(float)Value, -(float)Value); glEnable(GL_POLYGON_OFFSET_FILL); }
         else glDisable(GL_POLYGON_OFFSET_FILL); break;
       case D3DRS_SHADEMODE:        break;   // GOURAUD (our default); FLAT unsupported
+      case D3DRS_FILLMODE:
+        // Value-sensitive on purpose. SOLID is exactly what this backend draws, so accepting it
+        // is not a fallback and must not count — it was 19,392 hits of pure noise in the
+        // Generals capture (docs/measured-gap.json). WIREFRAME/POINT genuinely cannot be
+        // expressed: GLES3 dropped glPolygonMode, so they keep reporting rather than pretending.
+        if (Value != D3DFILL_SOLID) coverage::unhandled_render_state(State);
+        break;
       case D3DRS_ALPHABLENDENABLE: alphaBlendEnable = Value != 0; alphaBlendEnable ? glEnable(GL_BLEND) : glDisable(GL_BLEND); break;
       case D3DRS_SRCBLEND:         srcBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
       case D3DRS_DESTBLEND:        dstBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
@@ -662,6 +706,13 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_DIFFUSEMATERIALSOURCE:  diffuseSource = Value; break;
       case D3DRS_AMBIENTMATERIALSOURCE:  ambientSource = Value; break;
       case D3DRS_EMISSIVEMATERIALSOURCE: emissiveSource = Value; break;
+      case D3DRS_SPECULARMATERIALSOURCE:
+        // COLOR2 would read the specular vertex colour, which is not an attribute here (see the
+        // D3DFVF_SPECULAR skip in bind_pipeline) — report that value rather than pretend, and
+        // keep sourcing from the material so specular stays correct instead of going black.
+        if (Value == D3DMCS_COLOR2) coverage::unhandled_render_state(State);
+        else specularSource = Value;
+        break;
       case D3DRS_SPECULARENABLE:   specularEnable = Value != 0; break;
       case D3DRS_FOGENABLE:        fogEnable = Value != 0; break;
       case D3DRS_FOGSTART:         fogStart = as_float(Value); break;
@@ -687,6 +738,25 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_STENCILREF:       stencilRef = Value; break;
       case D3DRS_STENCILMASK:      stencilMask = Value; break;
       case D3DRS_STENCILWRITEMASK: stencilWriteMask = Value; break;
+      // --- Accepted and ignored. Each of these is a decision, not a gap: routing them to the
+      // coverage layer would rank them against real missing features, and PATCHSEGMENTS alone
+      // (40,138 hits in the Generals capture) would top that ranking forever.
+      case D3DRS_PATCHSEGMENTS:
+        // Not a render state as far as the engine is concerned: W3D smuggles a float
+        // bit-pattern through it as an N-patch tessellation hint
+        // (engine/GeneralsX/.../WW3D2/shader.cpp:1036). WebGL2 has no tessellation stage, so
+        // there is no implementation to have — only a side channel to ignore.
+        break;
+      case D3DRS_SOFTWAREVERTEXPROCESSING:
+        // A device-pipeline mode switch. This backend has exactly one vertex path (GLSL on the
+        // GPU) and no software fallback to switch to, so there is nothing to select.
+        break;
+      case D3DRS_RANGEFOGENABLE:
+        // Set twice at init and never again — almost certainly the engine writing D3D8's own
+        // FALSE default during a blanket state reset (the coverage layer records the token, not
+        // the value, so this is inferred). If a capture ever shows range fog genuinely enabled,
+        // it IS expressible via the existing shader-emulated fog: move it to a real handler then.
+        break;
       default: coverage::unhandled_render_state(State); break;
     }
     return D3D_OK;
@@ -799,6 +869,13 @@ struct Device8 : IDirect3DDevice8 {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl_tex_filter(s.magFilter));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_tex_wrap(s.addressU));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_tex_wrap(s.addressV));
+    // Clamp to the device limit, not to the request: asking for 16x on hardware that offers 4x
+    // is not an error in D3D8, it is a request the driver narrows. limit == 0 means the
+    // extension is absent, and then there is nothing to program at all.
+    if (const float limit = aniso_limit(); limit > 0.0f) {
+      const float want = s.maxAniso < 1 ? 1.0f : (float)s.maxAniso;
+      glTexParameterf(GL_TEXTURE_2D, kTextureMaxAnisotropyExt, want > limit ? limit : want);
+    }
   }
   // vbase: byte offset added to every vertex-attribute pointer. Used to honor D3D8's
   // SetIndices BaseVertexIndex on GLES3 (no glDrawElementsBaseVertex) — the dynamic
@@ -850,6 +927,9 @@ struct Device8 : IDirect3DDevice8 {
     key.diffFromVertex = lit && cvOn && diffuseSource == D3DMCS_COLOR1;
     key.ambFromVertex  = lit && cvOn && ambientSource == D3DMCS_COLOR1;
     key.emisFromVertex = lit && cvOn && emissiveSource == D3DMCS_COLOR1;
+    // COLOR1 is the only vertex source available (there is no specular attribute), so this is
+    // the one non-material case the shader can express.
+    key.specFromVertex = lit && cvOn && specularSource == D3DMCS_COLOR1;
     for (int s = 0; s < 2; s++) {
       const StageState& ss = stageState[s];
       Texture8* stex = s == 0 ? texture : texture1;

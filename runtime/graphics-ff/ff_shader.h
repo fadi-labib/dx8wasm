@@ -38,6 +38,7 @@ struct Key {
   // Fixed-function material color sources: when set, the lit path reads that
   // component from the vertex diffuse (D3DMCS_COLOR1) instead of the material uniform.
   bool diffFromVertex = false, ambFromVertex = false, emisFromVertex = false;
+  bool specFromVertex = false;   // D3DRS_SPECULARMATERIALSOURCE == D3DMCS_COLOR1
   Stage stage[2];
 };
 
