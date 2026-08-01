@@ -8,6 +8,7 @@
 #include "d3d8/d3d8.h"
 #include "dx8wasm/contract.h"
 #include <emscripten.h>
+#include <initializer_list>
 
 EM_JS(void, report_pixel, (int r, int g, int b, int a), { window.__gpu = { pixel: [r, g, b, a] }; });
 EM_JS(void, report_error, (const char* m), { window.__gpu = { error: UTF8ToString(m) }; });
@@ -57,6 +58,25 @@ int main() {
   // reporting — specifically, so a future capture that uses it says so instead of going quiet.
   dev->SetRenderState(D3DRS_SPECULARMATERIALSOURCE, D3DMCS_COLOR2);
   if (total() != before + 2) { report_error("SPECULARMATERIALSOURCE(COLOR2) was silently accepted"); return 1; }
+
+  // The documented no-op group. Each is accepted and ignored for a reason written at the call
+  // site; none is a rendering request this backend fails to serve, so none may count. Left
+  // counting, D3DRS_PATCHSEGMENTS alone (40,138 hits in the Generals capture) outranks every
+  // genuine finding in any ordering by frequency.
+  const uint32_t beforeNoop = total();
+  dev->SetRenderState(D3DRS_PATCHSEGMENTS, 0x40000000u /* a float bit-pattern, per W3D */);
+  dev->SetRenderState(D3DRS_SOFTWAREVERTEXPROCESSING, 0);
+  dev->SetRenderState(D3DRS_RANGEFOGENABLE, 0);
+  for (D3DTEXTURESTAGESTATETYPE t : {D3DTSS_BUMPENVMAT00, D3DTSS_BUMPENVMAT01, D3DTSS_BUMPENVMAT10,
+                                     D3DTSS_BUMPENVMAT11, D3DTSS_BUMPENVLSCALE, D3DTSS_BUMPENVLOFFSET})
+    dev->SetTextureStageState(0, t, 0);
+  if (total() != beforeNoop) { report_error("a documented no-op token was counted as unhandled"); return 1; }
+
+  // The prerequisite op stays a real gap, so the six matrix states above are still discoverable
+  // through the one token that would make them live. Silencing the states must not silence this.
+  const uint32_t beforeOp = total();
+  dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_BUMPENVMAP);
+  if (total() != beforeOp + 1) { report_error("D3DTOP_BUMPENVMAP stopped being reported"); return 1; }
 
   // Rendering must still work after both.
   dev->Clear(0, nullptr, D3DCLEAR_TARGET, 0xFF3366CCu, 1.0f, 0);

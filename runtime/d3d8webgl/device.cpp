@@ -657,6 +657,16 @@ struct Device8 : IDirect3DDevice8 {
       case D3DTSS_ADDRESSU:  s.addressU  = Value; break;
       case D3DTSS_ADDRESSV:  s.addressV  = Value; break;
       case D3DTSS_MAXANISOTROPY: s.maxAniso = Value ? Value : 1; break;
+      // Bump-environment matrix + luminance scale/offset, written as part of the engine's
+      // blanket stage-state reset at device init. Inert without D3DTOP_BUMPENVMAP or
+      // D3DTOP_BUMPENVMAPLUMINANCE to consume them, and neither op appears anywhere in the
+      // measurement (docs/measured-gap.json zero-hit findings) — the game never asked for bump
+      // mapping itself. Implementing the matrix without the op would be dead code. The op stays
+      // unimplemented and therefore still reported, so this stays discoverable if it ever lands.
+      case D3DTSS_BUMPENVMAT00: case D3DTSS_BUMPENVMAT01:
+      case D3DTSS_BUMPENVMAT10: case D3DTSS_BUMPENVMAT11:
+      case D3DTSS_BUMPENVLSCALE: case D3DTSS_BUMPENVLOFFSET:
+        break;
       // Report rather than swallow, matching SetRenderState. MAXMIPLEVEL and LOD bias arrive
       // here and would otherwise vanish without ever showing up in the conformance matrix.
       default: coverage::unhandled_stage_state(Type); break;
@@ -728,6 +738,25 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_STENCILREF:       stencilRef = Value; break;
       case D3DRS_STENCILMASK:      stencilMask = Value; break;
       case D3DRS_STENCILWRITEMASK: stencilWriteMask = Value; break;
+      // --- Accepted and ignored. Each of these is a decision, not a gap: routing them to the
+      // coverage layer would rank them against real missing features, and PATCHSEGMENTS alone
+      // (40,138 hits in the Generals capture) would top that ranking forever.
+      case D3DRS_PATCHSEGMENTS:
+        // Not a render state as far as the engine is concerned: W3D smuggles a float
+        // bit-pattern through it as an N-patch tessellation hint
+        // (engine/GeneralsX/.../WW3D2/shader.cpp:1036). WebGL2 has no tessellation stage, so
+        // there is no implementation to have — only a side channel to ignore.
+        break;
+      case D3DRS_SOFTWAREVERTEXPROCESSING:
+        // A device-pipeline mode switch. This backend has exactly one vertex path (GLSL on the
+        // GPU) and no software fallback to switch to, so there is nothing to select.
+        break;
+      case D3DRS_RANGEFOGENABLE:
+        // Set twice at init and never again — almost certainly the engine writing D3D8's own
+        // FALSE default during a blanket state reset (the coverage layer records the token, not
+        // the value, so this is inferred). If a capture ever shows range fog genuinely enabled,
+        // it IS expressible via the existing shader-emulated fog: move it to a real handler then.
+        break;
       default: coverage::unhandled_render_state(State); break;
     }
     return D3D_OK;
