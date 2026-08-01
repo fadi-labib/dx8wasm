@@ -6,7 +6,7 @@ tasks found a defect in the plan's own code**. This records what shipped, what t
 before they were checked, what was deliberately left undone, and the lessons worth citing later.
 
 Plan: [`superpowers/plans/2026-08-01-close-the-remaining-docs-items.md`](superpowers/plans/2026-08-01-close-the-remaining-docs-items.md).
-Range: `e4a0e08..f26f203` — 14 non-merge commits across four merged branches.
+Range: `e4a0e08..f26f203` — 13 non-merge commits across four merged branches.
 
 ## The audit, and what it overturned
 

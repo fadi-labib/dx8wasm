@@ -19,10 +19,10 @@ Proven: a full 500k-LOC engine (C&C Generals Zero Hour) already runs in-browser 
 Not an emulator, not a magic button, not for modern DX11/12 AAA. See `SPEC.md` §2–3, §12 for the fit criteria and the "which strategy for which game" decision framework.
 
 ## Status
-**Phases 0–3 done; game-integration foundation in place.** The D3D8→WebGL2
+**Phases 0–4 done; game-integration foundation in place.** The D3D8→WebGL2
 fixed-function pipeline is broadly feature-complete (transforms, all light types,
 ambient/diffuse/specular, fog, texture combiners, render states, pre-transformed
-2D, every primitive type) — verified by 16 headless pixel smokes on Linux CI and
+2D, every primitive type) — verified by 35 headless pixel/self-test smokes on Linux CI and
 catalogued in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md). The runtime contract
 (init + input pump + coverage introspection) is implemented, and a game plugs in
 through the public surface alone.

@@ -9,7 +9,7 @@
 dx8wasm is a reusable SDK, not a single game port. The graphics pipeline is
 broadly feature-complete (transforms, all light types, ambient/diffuse/specular,
 fog, texture combiners, render states, pre-transformed 2D, every primitive type),
-verified by ~20 headless pixel/self-test smokes on Linux CI. Two audiences: agents
+verified by 35 headless pixel/self-test smokes on Linux CI. Two audiences: agents
 *building a game against* the SDK (start with SDK_REFERENCE + INTEGRATION), and
 agents *contributing to* the SDK (start with AGENTS + ARCHITECTURE). Core
 disciplines: clean-room re-derivation, and "flag + fall back + count" for anything
