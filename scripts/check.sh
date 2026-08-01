@@ -34,7 +34,13 @@ echo "[2/4] vendored binaries tracked"
 # Any *.wasm under a vendor/ dir must be tracked despite the *.wasm gitignore rule.
 while IFS= read -r f; do
   git ls-files --error-unmatch "$f" >/dev/null 2>&1 || note "$f: present but NOT tracked (gitignore likely swallowed it)"
-done < <(find . -path ./node_modules -prune -o -path '*/vendor/*' -name '*.wasm' -print | sed 's|^\./||')
+done < <(find . -path ./node_modules -prune \
+              -o -path ./.worktrees -prune \
+              -o -path '*/vendor/*' -name '*.wasm' -print | sed 's|^\./||')
+# .worktrees/ is pruned, not scanned: a linked worktree is a second checkout of this same repo,
+# so every vendored .wasm in it is a copy of a file already checked here — but `git ls-files`
+# run from the main worktree cannot match a path under it, so each copy reports as untracked.
+# Scanning them would fail this guardrail for the mere existence of a worktree.
 
 echo "[3/4] commit author + co-author"
 range="${1:-}"
