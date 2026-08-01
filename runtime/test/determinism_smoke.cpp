@@ -20,9 +20,12 @@ EM_JS(void, report_digest, (const char* d), { window.__det = { digest: UTF8ToStr
 
 static IDirect3DDevice8* g_dev = nullptr;
 
-// One fixed sequence of sub-scenes, chosen so the 16 pixels of a 4x4 canvas are not all the same
-// colour and so several independent parts of the pipeline contribute: clear colour, depth state,
-// blend state, and a transform. Four passes x 16 px = 64 px of signal per repeat.
+// One fixed sequence: four clears with different colours, each presented and read back, chained
+// into one digest (four passes x 16 px = 64 px of signal per repeat). This proves bit-for-bit
+// stability of the clear/present/readback path only — it does not currently exercise transforms,
+// lighting, blending, or any draw call (D3DRS_ZENABLE/D3DRS_ALPHABLENDENABLE are set identically
+// on every pass and so contribute no distinguishing signal). A consumer that needs those covered
+// extends this sequence with its own draws.
 static uint32_t render_sequence() {
   uint32_t d = digest::kSeed;
   const uint32_t colors[] = {0xFF3366CCu, 0xFF33CC66u, 0xFFCC6633u, 0xFF663399u};
