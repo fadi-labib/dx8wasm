@@ -8,6 +8,7 @@
 #include "platform/platform.h"
 #include "graphics-ff/ff_shader.h"
 #include "coverage/coverage.h"
+#include "dx8wasm/telemetry.h"
 #include <GLES3/gl3.h>
 #include <emscripten/html5.h>
 #include <cmath>
@@ -516,6 +517,9 @@ struct Device8 : IDirect3DDevice8 {
   D3DMATERIAL8 material{ {1, 1, 1, 1}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}, 0 };
   bool fogEnable = false;
   float fogColor[3] = {0, 0, 0}, fogStart = 0.0f, fogEnd = 1.0f;
+  // Last fog mode written, per D3D8 state. Sentinel 0xFFFFFFFF = "never written", so the first
+  // write is a transition even when it selects mode 0.
+  uint32_t lastFogTableMode = 0xFFFFFFFFu, lastFogVertexMode = 0xFFFFFFFFu;
   // Color write mask (D3DRS_COLORWRITEENABLE). Default = write all (0xF). Zero is a real
   // value: stencil-shadow volumes render color-write-off; mapping 0 -> "write all" painted
   // every shadow volume as a solid black silhouette over the scene.
@@ -731,8 +735,25 @@ struct Device8 : IDirect3DDevice8 {
       case D3DRS_FOGCOLOR:
         fogColor[0] = ((Value >> 16) & 0xff) / 255.0f; fogColor[1] = ((Value >> 8) & 0xff) / 255.0f;
         fogColor[2] = (Value & 0xff) / 255.0f; break;
-      case D3DRS_FOGTABLEMODE: case D3DRS_FOGVERTEXMODE:
-        if (Value != D3DFOG_LINEAR && Value != D3DFOG_NONE) coverage::unhandled_render_state(State); break;
+      case D3DRS_FOGTABLEMODE: case D3DRS_FOGVERTEXMODE: {
+        // Positive-usage telemetry, deliberately NOT a coverage counter: LINEAR is implemented,
+        // so nothing here falls back and fallbacks_taken must not move. It exists because the
+        // coverage counter alone could never distinguish "relies on linear fog" from "never
+        // touches fog" (docs/CONFORMANCE.md zero-hit findings). Emitted on transitions only —
+        // an engine may rewrite this per pass, and a per-occurrence record would crowd the ring
+        // for a value that never changed. So a count here is a TRANSITION count, not an
+        // occurrence count; do not read it as "how often fog was set".
+        uint32_t& last = State == D3DRS_FOGTABLEMODE ? lastFogTableMode : lastFogVertexMode;
+        if (last != Value) {
+          last = Value;
+          char key[DX8WASM_TEL_NAME_MAX];
+          std::snprintf(key, sizeof key, "d3d8.fogmode.%s.%08x",
+                        State == D3DRS_FOGTABLEMODE ? "table" : "vertex", (unsigned)Value);
+          dx8wasm_tel_counter(key, 1);
+        }
+        if (Value != D3DFOG_LINEAR && Value != D3DFOG_NONE) coverage::unhandled_render_state(State);
+        break;
+      }
       case D3DRS_AMBIENT:
         globalAmbient[0] = ((Value >> 16) & 0xff) / 255.0f; globalAmbient[1] = ((Value >> 8) & 0xff) / 255.0f;
         globalAmbient[2] = (Value & 0xff) / 255.0f; globalAmbient[3] = ((Value >> 24) & 0xff) / 255.0f; break;

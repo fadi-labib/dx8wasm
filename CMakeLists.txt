@@ -138,6 +138,12 @@ target_link_libraries(vertexblend_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(vertexblend_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(vertexblend_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(fogmode_smoke runtime/test/fogmode_smoke.cpp)
+target_include_directories(fogmode_smoke PRIVATE runtime runtime/d3d8 runtime/include)
+target_link_libraries(fogmode_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(fogmode_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(fogmode_smoke PROPERTIES SUFFIX ".js")
+
 add_executable(render_state_smoke runtime/test/render_state_smoke.cpp)
 target_include_directories(render_state_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(render_state_smoke PRIVATE dx8_d3d8webgl)
