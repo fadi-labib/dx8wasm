@@ -3,8 +3,11 @@
 // state, so this renders one fixed sequence of sub-scenes TWICE through the same device and
 // asserts the two framebuffer digests match — that catches state the first pass left dirty.
 // scripts/determinism.mjs then loads this smoke in several fresh contexts and compares the
-// published digest across them, which catches uninitialised memory and iteration-order-dependent
-// shader-cache keys that an in-process repeat cannot see.
+// published digest across them — a fresh context (not just a fresh page) is what will catch
+// uninitialised memory and iteration-order-dependent shader-cache keys that an in-process repeat
+// cannot see, once the rendered sequence includes a draw call. Today's sequence below is clears
+// only (no draw, so no GL program is ever compiled or cached), so what this actually proves right
+// now is bit-for-bit stability of the clear/present/readback path across fresh processes.
 //
 // The digest is asserted here and published on window.__det, NOT reported through the pixel
 // tuple: phase2.gpu.test.mjs compares pixels with a +/-2 tolerance, which would happily accept a

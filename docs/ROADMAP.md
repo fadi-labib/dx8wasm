@@ -65,10 +65,13 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - ✅ **Emscripten pinned:** `.emscripten-version` (6.0.2) is checked by `ci.sh` against the live toolchain; the `wasm-opt`/`-g` DWARF workaround is documented in `cmake/`.
 - ✅ **Determinism harness done:** `determinism_smoke` digests one fixed render sequence twice
   in-process (catches state left dirty by the first pass) and `scripts/determinism.mjs` compares
-  the digest across fresh browser contexts (catches uninitialised memory and iteration-order-
-  dependent shader-cache keys). Both run in `ci.sh`. A game with replays extends the same seam by
-  digesting its own per-tick simulation state. `runtime/test/frame_digest.h` is the reusable
-  FNV-1a-over-`glReadPixels` helper.
+  the digest across fresh browser contexts. Fresh contexts (rather than a fresh page) are what
+  will catch uninitialised memory and iteration-order-dependent shader-cache keys, once the
+  digested sequence includes a draw call — today's sequence is clears only, so what this proves
+  right now is bit-for-bit stability of the clear/present/readback path across fresh processes.
+  Both run in `ci.sh`. A game with replays extends the same seam by digesting its own per-tick
+  simulation state. `runtime/test/frame_digest.h` is the reusable FNV-1a-over-`glReadPixels`
+  helper.
 
 **Phase 4 complete.** Every non-parked phase is now closed; the open list is exactly the two
 parked phases plus compatlib's grow-on-demand tiers.

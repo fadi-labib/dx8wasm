@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Determinism harness (Phase 4), across-process half. determinism_smoke already asserts that one
 // sequence digests identically when repeated inside a single process; this loads it in N fresh
-// page contexts and compares the digest between them, which is what catches uninitialised
-// memory and iteration-order-dependent shader-cache keys that an in-process repeat cannot see.
+// page contexts and compares the digest between them. Fresh contexts (not fresh pages) are what
+// will catch uninitialised memory and iteration-order-dependent shader-cache keys that an
+// in-process repeat cannot see, once the digested sequence includes a draw call — today's
+// sequence is clears only, so this run proves bit-for-bit stability of the clear/present/readback
+// path across fresh processes, nothing shader-cache-related yet.
 // A game with replays extends this: digest its own simulation state per tick and compare here.
 import { createServer } from 'node:http';
 import { statSync, existsSync, writeFileSync, createReadStream } from 'node:fs';

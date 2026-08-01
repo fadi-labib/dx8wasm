@@ -79,8 +79,11 @@ still does — a smoke that only checked the first half could pass by silencing 
 `runtime/test/frame_digest.h` folds a `glReadPixels` into a chained FNV-1a digest.
 `determinism_smoke` uses it to prove one render sequence repeats identically in-process, and
 `scripts/determinism.mjs` (in `ci.sh`) proves the digest reproduces across fresh browser
-contexts. A game with replays extends the same pattern by digesting its own per-tick simulation
-state and comparing across runs — that is the desync check, and this is the SDK-side half of it.
+contexts. Today's digested sequence is clears only (no draw call), so this currently proves
+bit-for-bit stability of the clear/present/readback path, not yet shader-cache-key stability —
+that needs the sequence to include a draw. A game with replays extends the same pattern by
+digesting its own per-tick simulation state and comparing across runs — that is the desync check,
+and this is the SDK-side half of it.
 
 ---
 
