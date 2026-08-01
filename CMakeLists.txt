@@ -126,6 +126,12 @@ target_link_libraries(coverage_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(coverage_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(coverage_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(accepted_states_smoke runtime/test/accepted_states_smoke.cpp)
+target_include_directories(accepted_states_smoke PRIVATE runtime runtime/d3d8 runtime/include)
+target_link_libraries(accepted_states_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(accepted_states_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(accepted_states_smoke PROPERTIES SUFFIX ".js")
+
 add_executable(render_state_smoke runtime/test/render_state_smoke.cpp)
 target_include_directories(render_state_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(render_state_smoke PRIVATE dx8_d3d8webgl)

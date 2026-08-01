@@ -650,6 +650,13 @@ struct Device8 : IDirect3DDevice8 {
         if (Value) { glPolygonOffset(-(float)Value, -(float)Value); glEnable(GL_POLYGON_OFFSET_FILL); }
         else glDisable(GL_POLYGON_OFFSET_FILL); break;
       case D3DRS_SHADEMODE:        break;   // GOURAUD (our default); FLAT unsupported
+      case D3DRS_FILLMODE:
+        // Value-sensitive on purpose. SOLID is exactly what this backend draws, so accepting it
+        // is not a fallback and must not count — it was 19,392 hits of pure noise in the
+        // Generals capture (docs/measured-gap.json). WIREFRAME/POINT genuinely cannot be
+        // expressed: GLES3 dropped glPolygonMode, so they keep reporting rather than pretending.
+        if (Value != D3DFILL_SOLID) coverage::unhandled_render_state(State);
+        break;
       case D3DRS_ALPHABLENDENABLE: alphaBlendEnable = Value != 0; alphaBlendEnable ? glEnable(GL_BLEND) : glDisable(GL_BLEND); break;
       case D3DRS_SRCBLEND:         srcBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
       case D3DRS_DESTBLEND:        dstBlend = gl_blend(Value); glBlendFunc(srcBlend, dstBlend); break;
