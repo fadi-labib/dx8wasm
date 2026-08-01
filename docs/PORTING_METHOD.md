@@ -70,7 +70,7 @@ When adopting DXVK/ANGLE/Wine pieces:
   See `generals-dx8wasm/docs/RESULTS-2026-07-31-telemetry-verification-program.md` — 40 of
   its 84 lessons are SDK-side — and, in this repo,
   [`RESULTS-2026-08-01-close-the-docs-items.md`](RESULTS-2026-08-01-close-the-docs-items.md)
-  (`CDI-1`..`CDI-27`).
+  (`CDI-1`..`CDI-29`).
 - **Source-annotation convention** on every change (`// project @bugfix author date desc`) — keeps a huge port diffable and upstream-mergeable.
 - **Minimal-diff discipline** — one commit per category; never mix platform code with logic. (A whole-port mega-PR gets rejected as unreviewable; the same work sliced lands.)
 - **Reproducible build env** (Docker/pinned toolchain) so "works on my machine" can't burn a session — and so an SDK never ships a host-specific path.

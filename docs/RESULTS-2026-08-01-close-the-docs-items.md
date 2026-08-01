@@ -6,7 +6,8 @@ tasks found a defect in the plan's own code**. This records what shipped, what t
 before they were checked, what was deliberately left undone, and the lessons worth citing later.
 
 Plan: [`superpowers/plans/2026-08-01-close-the-remaining-docs-items.md`](superpowers/plans/2026-08-01-close-the-remaining-docs-items.md).
-Range: `e4a0e08..f26f203` — 13 non-merge commits across four merged branches.
+Range: `bc7ae37..a71e6f3` — 22 non-merge commits, of which 13 are the ten planned tasks across four
+merged branches and the rest are setup plus the final-review fix wave described at the end.
 
 ## The audit, and what it overturned
 
@@ -281,8 +282,56 @@ reporting. The conformance matrix now reports fill mode by value, mirroring how 
 was requested" — `aniso_limit()` returns 0 for "not possible", never 1 — and the result must be
 cached, since `apply_sampler` runs per draw per texture stage.
 
+### What the final whole-branch review caught — and why it matters most
+
+Every one of the ten tasks passed its own scoped review. The whole-branch review then returned
+**NEEDS WORK**: 1 Critical, 5 Important, 9 Minor. The runtime changes were ruled sound; **every
+defect was in what the branch claimed** — the one thing this plan said it would not get wrong.
+Fixed in `ac739b9`, `8283fed`, `23eed3f`, `bd4d2bc`, `2b1c61a`, `a71e6f3`; the scoped re-review then
+verdicted all fifteen ADDRESSED with no test weakened.
+
+The Critical one is the most useful thing in this document. Three places — `ROADMAP.md`,
+`determinism_smoke.cpp`'s header, and `determinism.mjs`'s header, all verbatim from the plan — claimed
+the fresh-context runs catch "iteration-order-dependent shader-cache keys". They cannot: the digested
+sequence has no draw call, so `ff::build`/`hash_key` is never reached and no program is ever cached.
+The file even contradicted itself, the Task 9 comment fix correctly stating "does not exercise… any
+draw call" seven lines below the header making the claim. A maintainer could have added an
+order-dependent key field — CDI-15's exact failure mode — seen the determinism stage green, and
+trusted a sentence that was never true.
+
+Three of the Important findings were this document's own lessons recurring inside the branch that
+wrote them, which is why the next two lessons exist.
+
+**CDI-28 — Writing a lesson down does not apply it; sweep the class, not the instance.** CDI-4 (a
+counted quantity in prose is a liability) was fixed in `ROADMAP.md` and missed in `README.md` ("16
+smokes") and `llms.txt` ("~20"), leaving the repo carrying three different figures for 35. CDI-16 (a
+fixture can stop testing without failing) recurred inside the conformance program itself: after every
+measured token was implemented, the `textureOps` and `formats` probe tables contained no unimplemented
+token at all, so neither could ever emit a ⚠️ row again while displaying "6/6" and "5/5" — two of
+three probed tables lost their falsifiability *by succeeding*. CDI-17 (a counter cannot express what
+it does not include) recurred as cross-task drift: `total()` claims to sum "every coverage counter",
+and a later task appended `unhandled_vertex_formats` without adding it, so a leak into that counter
+would pass every "must not move" assertion in the file. Each is invisible from inside the task that
+caused it; only a whole-branch pass finds them.
+
+**CDI-29 — A sentence can be entirely true and still mislead; test the reading, not the clauses.**
+The anisotropy conformance row read "a textured draw with the state set is pixel-verified" and was
+graded ✅ yes. Every clause is true. But the pixel assertion validates the MODULATE colour product,
+not anisotropic sampling — and under SwiftShader `aniso_limit()` may return 0 and skip the
+`glTexParameterf` entirely while producing byte-identical pixels, so the test cannot distinguish
+"programmed correctly" from "not programmed at all". It survived a fix wave and a re-review as an
+out-of-scope note precisely because nothing in it was incorrect. Demoted to `partial` in `a71e6f3`
+with the limits stated. The check that catches this class is not "is each clause accurate?" but
+"what will a reader conclude, and could the cited test detect that conclusion being false?"
+
 ## Repo state at close
 
-Branch `main` at `f26f203`, clean. `scripts/ci.sh` → `ALL GREEN`: guardrails, pinned Emscripten
-6.0.2, packer self-test, web-runtime suite, 35 headless GPU smokes, and the determinism harness
-(digest `70f71745` stable across three fresh browser contexts).
+Branch `main`, clean, `scripts/ci.sh` → `ALL GREEN`: guardrails, pinned Emscripten 6.0.2, packer
+self-test, web-runtime suite, **35** headless GPU smokes, and the determinism harness (digest
+`70f71745` stable across three fresh browser contexts). Conformance: render states 25/29, texture
+ops 6/7, formats 5/6 — the sub-totals are deliberate, since each probed table keeps at least one
+genuinely-unimplemented token so it remains able to report a failure (see CDI-28).
+
+A specific commit hash is *not* recorded here on purpose: it was, and went stale within the hour as
+the final-review fixes landed — the same class of defect as the "31 smokes" this branch fixed
+(CDI-4). `git log` is the authority for where the branch head is.
