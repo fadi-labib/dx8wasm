@@ -45,8 +45,10 @@ int main() {
     report_error("CreateDevice failed"); return 1;
   }
 
-  // Three distinct unhandled tokens. D3DRS_FILLMODE stays unimplemented, so this
-  // smoke is stable as later slices implement other render states. It is hit 3
+  // Three distinct unhandled tokens. D3DRS_FILLMODE(SOLID) is now handled (accepted_states_smoke
+  // asserts that), but WIREFRAME(2)/POINT(1) stay unimplemented — GLES3 has no glPolygonMode, so
+  // those two values genuinely cannot be expressed. This smoke's stability rests on values 2 and
+  // 1 staying unexpressible, not on the state as a whole staying unimplemented. It is hit 3
   // times (same token, D3DRS_FILLMODE = 0x00000008) to exercise coalescing: the
   // per-occurrence counters below must see 3 calls, but the telemetry ring must
   // still only carry one counter record for it, with delta 3.

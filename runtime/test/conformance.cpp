@@ -76,6 +76,10 @@ int main() {
     {"D3DTOP_DISABLE", D3DTOP_DISABLE}, {"D3DTOP_SELECTARG1", D3DTOP_SELECTARG1},
     {"D3DTOP_MODULATE", D3DTOP_MODULATE}, {"D3DTOP_ADD", D3DTOP_ADD},
     {"D3DTOP_MODULATE2X", 5}, {"D3DTOP_ADDSIGNED", 8},
+    // Kept unimplemented on purpose: without at least one negative row here, this table cannot
+    // produce a fallback row and would misread as "every texture op handled" by construction
+    // rather than by measurement.
+    {"D3DTOP_MULTIPLYADD", 25},
   };
   for (size_t i = 0; i < sizeof(ops) / sizeof(ops[0]); i++) {
     j += std::string(i ? "," : "") + "{\"name\":\"" + ops[i].name + "\",\"handled\":" +
@@ -87,6 +91,9 @@ int main() {
   const FM fmts[] = {
     {"D3DFMT_A8R8G8B8", D3DFMT_A8R8G8B8}, {"D3DFMT_X8R8G8B8", D3DFMT_X8R8G8B8},
     {"D3DFMT_R5G6B5", 23}, {"D3DFMT_A8", 28}, {"D3DFMT_DXT1", 0x31545844 /* 'DXT1' */},
+    // Kept unimplemented on purpose (a YUV FourCC format, no decode path exists): without it this
+    // table has no negative row and would misread as "every format handled" by construction.
+    {"D3DFMT_UYVY", 0x59565955 /* 'UYVY' */},
   };
   for (size_t i = 0; i < sizeof(fmts) / sizeof(fmts[0]); i++) {
     j += std::string(i ? "," : "") + "{\"name\":\"" + fmts[i].name + "\",\"handled\":" +
