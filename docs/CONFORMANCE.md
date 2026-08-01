@@ -98,7 +98,7 @@ coverage layer — never silently wrong.
 | Fog: linear | eye-space depth blend | ✅ yes | fog_smoke |
 | Fog: EXP / EXP2 | flagged via coverage | ❌ no | — |
 | Coverage / fallback layer | dx8wasm_get_coverage + unhandled callback | ✅ yes | coverage_smoke |
-| Anisotropic filtering | D3DTSS_MAXANISOTROPY via EXT_texture_filter_anisotropic, clamped to the device limit; a textured draw with the state set is pixel-verified, not just accepted | ✅ yes | accepted_states_smoke |
+| Anisotropic filtering | D3DTSS_MAXANISOTROPY accepted and clamped to the device limit; a textured draw exercises the sampler path (glTexParameterf or its absent-extension skip) without corrupting the result. Anisotropic sampling itself is not visually verified — a 2x2 single-mip texture on a 4x4 canvas cannot exhibit anisotropy, and a SwiftShader context may not expose the extension at all, so the same pixels would appear whether or not the parameter actually took effect | 🟡 partial | accepted_states_smoke |
 | Accepted-without-acting states | FILLMODE(SOLID), PATCHSEGMENTS, SOFTWAREVERTEXPROCESSING, RANGEFOGENABLE, 6x BUMPENV* — no-op with a written reason, not counted | ✅ yes | accepted_states_smoke |
 | Vertex blending (D3DFVF_XYZB1-5) | not implemented, but now instrumented so a capture can measure it | ❌ no | vertexblend_smoke |
 | Fog usage telemetry | every fog-mode transition recorded, so "fog unused" is falsifiable | ✅ yes | fogmode_smoke |
