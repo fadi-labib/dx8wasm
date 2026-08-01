@@ -3,6 +3,11 @@
 > Unblocks GeneralsX texture loading: the engine uploads texture pixels through
 > the D3D8 **surface** path, which dx8wasm stubs. This adds it.
 
+> **STATUS: COMPLETE (verified 2026-08-01).** All four tasks are implemented — `Surface8`,
+> `GetSurfaceLevel`, `CreateImageSurface`, `CopyRects` (`runtime/d3d8webgl/device.cpp:977`) and
+> `UpdateTexture` (`:1001`), covered by `surface_smoke`. The plan's "DXT defers" note is also
+> closed: DXT1 landed and is verified by `dxt_smoke`. Kept for rationale, not as open work.
+
 **Goal:** Implement `IDirect3DSurface8` and the surface-based texture-upload API so
 the engine's `TextureClass` load path works, taking the in-browser GeneralsX boot
 past its first texture-load crash toward a rendered frame.

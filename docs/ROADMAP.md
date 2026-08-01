@@ -41,7 +41,9 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - ✅ **3.7 done:** pre-transformed vertices (`D3DFVF_XYZRHW`) — the UI/HUD/2D path. The vertex shader maps screen-pixel coords straight to clip space (D3D top-left origin → Y-flip, `z*2−1` for depth), bypassing world/view/proj; uses a `uViewport` uniform from the device's backbuffer size. Attribute 0 becomes a `vec4`; `lit`/rhw are mutually exclusive. `rhw`=1 assumed (perspective 2D deferred). Verified by `rhw_smoke`: a screen-space quad over the right half lights the right pixel green and leaves the left black.
 - ✅ **3.8 done:** all primitive types. `DrawIndexedPrimitive` maps every `D3DPT_*` (point/line list+strip, triangle list/strip/fan) to its GL mode and derives the index count from the primitive count (`*3`, `+2`, `*2`, `+1`, etc.) instead of hard-rejecting non-`TRIANGLELIST`. Verified by `strip_smoke`: a 4-index triangle strip (primCount 2) fills the quad.
 - ✅ **3.9 done:** texture-stage combiners — `MODULATE`, `MODULATE2X/4X`, `ADD`, `ADDSIGNED`, `SELECTARG1/2` over the default args (arg1=texture, arg2=diffuse); D3D saturation via the framebuffer's UNORM clamp. Verified by `combiner_smoke` (`ADD`); coverage-probe texture ops now 6/6. `coverage_smoke` op probe moved to `D3DTOP_SUBTRACT`.
-- Remaining fixed-function work, now **measured** rather than guessed — see
+- Remaining fixed-function work, now **measured** rather than guessed, is being closed by
+  [`superpowers/plans/2026-08-01-close-the-remaining-docs-items.md`](superpowers/plans/2026-08-01-close-the-remaining-docs-items.md)
+  (Tier 2 implements + documents the no-ops; Tier 3 adds the two missing instruments) — see
   [`docs/measured-gap.json`](measured-gap.json) and the generated "Measured against a
   real target" section of [`CONFORMANCE.md`](CONFORMANCE.md#measured-against-a-real-target-not-empirically-probed)
   (three real-GPU C&C Generals ZH captures: menu, skirmish, campaign; 12 distinct
