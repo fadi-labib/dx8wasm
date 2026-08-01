@@ -36,6 +36,11 @@ int main() {
   dev->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
   if (total() != before) { report_error("D3DFILL_SOLID was counted as unhandled"); return 1; }
 
+  // Anisotropy is a sampler parameter with a real GL mapping (EXT_texture_filter_anisotropic),
+  // clamped to 1 when the extension is absent — either way it is handled, never a fallback.
+  dev->SetTextureStageState(0, D3DTSS_MAXANISOTROPY, 4);
+  if (total() != before) { report_error("D3DTSS_MAXANISOTROPY was counted as unhandled"); return 1; }
+
   // --- Genuinely unimplemented: the counter MUST move. ---
   // GLES3 has no glPolygonMode, so wireframe cannot be expressed and must keep reporting.
   dev->SetRenderState(D3DRS_FILLMODE, D3DFILL_WIREFRAME);

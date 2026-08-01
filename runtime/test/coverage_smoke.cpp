@@ -51,14 +51,18 @@ int main() {
   // per-occurrence counters below must see 3 calls, but the telemetry ring must
   // still only carry one counter record for it, with delta 3.
   dev->SetRenderState(D3DRS_FILLMODE, 2 /* wireframe */);
-  dev->SetRenderState(D3DRS_FILLMODE, 1 /* solid — still the same unhandled token */);
+  dev->SetRenderState(D3DRS_FILLMODE, 1 /* D3DFILL_POINT — still the same unhandled token */);
   dev->SetRenderState(D3DRS_FILLMODE, 2 /* wireframe again */);
   dev->SetTextureStageState(0, D3DTSS_COLOROP, 25 /* D3DTOP_MULTIPLYADD, unimplemented */);   // -> fallback
   IDirect3DTexture8* tex = nullptr;
   dev->CreateTexture(2, 2, 1, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, &tex);   // unsupported format
-  // A stage state with no implementation (D3DTSS_MAXANISOTROPY = 21) must be COUNTED, not
-  // silently dropped — the render-state path reported its gaps while this one swallowed them.
-  dev->SetTextureStageState(0, (D3DTEXTURESTAGESTATETYPE)21, 4);
+  // A stage state with no implementation must be COUNTED, not silently dropped — the
+  // render-state path reported its gaps while this one swallowed them. D3DTSS_MAXMIPLEVEL (20)
+  // is the probe: the backend always samples the full mip chain the engine uploaded, and it is
+  // not in the documented-no-op group, so it stays a genuine gap. (This probe used to be
+  // MAXANISOTROPY, until that was implemented — if you implement MAXMIPLEVEL, move this again
+  // in the same commit or this smoke will fail for the right reason at the wrong time.)
+  dev->SetTextureStageState(0, D3DTSS_MAXMIPLEVEL, 1);
 
   // dx8wasm_get_coverage() flushes the telemetry tally as one of its side effects
   // (see coverage.cpp), so the drain just below is guaranteed to see this batch's

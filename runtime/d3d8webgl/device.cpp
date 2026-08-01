@@ -9,6 +9,7 @@
 #include "graphics-ff/ff_shader.h"
 #include "coverage/coverage.h"
 #include <GLES3/gl3.h>
+#include <emscripten/html5.h>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -23,6 +24,27 @@ extern "C" void dx8wasm_debug_counts(long* draws, long* bindfail, long* clears) 
 }
 
 namespace {
+
+// EXT_texture_filter_anisotropic, resolved once. WebGL requires an extension to be *enabled*
+// on the context before its tokens do anything, which is why this goes through
+// emscripten_webgl_enable_extension rather than just calling glTexParameterf and hoping.
+// Returns the device's max anisotropy, or 0 when the extension is unavailable — 0 reads as
+// "no anisotropy possible", never as "1x was requested".
+constexpr GLenum kTextureMaxAnisotropyExt = 0x84FE;
+constexpr GLenum kMaxTextureMaxAnisotropyExt = 0x84FF;
+float aniso_limit() {
+  static float limit = -1.0f;
+  if (limit >= 0.0f) return limit;
+  limit = 0.0f;
+  if (emscripten_webgl_enable_extension(emscripten_webgl_get_current_context(),
+                                        "EXT_texture_filter_anisotropic")) {
+    GLfloat max = 0.0f;
+    glGetFloatv(kMaxTextureMaxAnisotropyExt, &max);
+    if (max > 1.0f) limit = max;
+  }
+  return limit;
+}
+
 void warn_once(const char* what) {   // one line per distinct unimplemented method
   static const char* seen[64]; static int n = 0;
   for (int i = 0; i < n; i++) if (seen[i] == what) return;
@@ -463,11 +485,12 @@ struct Device8 : IDirect3DDevice8 {
     // bilinear/trilinear with wrapping; D3D's own POINT/WRAP default would look
     // blocky). The engine overrides per stage (e.g. terrain sets CLAMP).
     uint32_t minFilter, magFilter, mipFilter, addressU, addressV;
+    uint32_t maxAniso;   // D3DTSS_MAXANISOTROPY; 1 = isotropic, D3D8's own default
   } stageState[2] = {
     { D3DTOP_MODULATE, D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_SELECTARG1, D3DTA_TEXTURE, D3DTA_CURRENT, 0, 0, 0,
-      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP },
+      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP, 1 },
     { D3DTOP_DISABLE,  D3DTA_TEXTURE, D3DTA_CURRENT, D3DTOP_DISABLE,    D3DTA_TEXTURE, D3DTA_CURRENT, 1, 0, 0,
-      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP },
+      D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTADDRESS_WRAP, D3DTADDRESS_WRAP, 1 },
   };
   float texMat[2][16];                       // D3DTS_TEXTURE0 / D3DTS_TEXTURE0+1 (row-major, uploaded as-is)
   float texFactor[4] = {0, 0, 0, 0};         // D3DRS_TEXTUREFACTOR as RGBA floats
@@ -630,7 +653,8 @@ struct Device8 : IDirect3DDevice8 {
       case D3DTSS_MIPFILTER: s.mipFilter = Value; break;
       case D3DTSS_ADDRESSU:  s.addressU  = Value; break;
       case D3DTSS_ADDRESSV:  s.addressV  = Value; break;
-      // Report rather than swallow, matching SetRenderState. Anisotropy and LOD bias arrive
+      case D3DTSS_MAXANISOTROPY: s.maxAniso = Value ? Value : 1; break;
+      // Report rather than swallow, matching SetRenderState. MAXMIPLEVEL and LOD bias arrive
       // here and would otherwise vanish without ever showing up in the conformance matrix.
       default: coverage::unhandled_stage_state(Type); break;
     }
@@ -806,6 +830,13 @@ struct Device8 : IDirect3DDevice8 {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl_tex_filter(s.magFilter));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_tex_wrap(s.addressU));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_tex_wrap(s.addressV));
+    // Clamp to the device limit, not to the request: asking for 16x on hardware that offers 4x
+    // is not an error in D3D8, it is a request the driver narrows. limit == 0 means the
+    // extension is absent, and then there is nothing to program at all.
+    if (const float limit = aniso_limit(); limit > 0.0f) {
+      const float want = s.maxAniso < 1 ? 1.0f : (float)s.maxAniso;
+      glTexParameterf(GL_TEXTURE_2D, kTextureMaxAnisotropyExt, want > limit ? limit : want);
+    }
   }
   // vbase: byte offset added to every vertex-attribute pointer. Used to honor D3D8's
   // SetIndices BaseVertexIndex on GLES3 (no glDrawElementsBaseVertex) — the dynamic
