@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **STATUS: COMPLETE (verified 2026-08-01).** Every task below is implemented; the checkboxes
+> were never ticked, so ignore them. Verified by inspection, not by checkbox: `format_support.h`,
+> `caps_query_smoke.cpp` and `honest_stubs_smoke.cpp` exist and are in the CI smoke list;
+> `dx8wasm_has_cap` reports stencil (`runtime/runtime.cpp:38`); `docs/SDK_REFERENCE.md` carries
+> the "Stubs fail loudly" contract. Kept for its rationale — the *why* behind each demotion is
+> still the reference for future stubs — not as an open work item.
+
 **Goal:** Remove every dx8wasm stub that reports success with a plausible-but-fabricated
 value, so an unimplemented D3D8 feature always surfaces as a failure or a coverage counter
 rather than as silently-wrong rendering.
