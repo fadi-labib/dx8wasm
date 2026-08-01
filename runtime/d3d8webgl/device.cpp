@@ -555,6 +555,12 @@ struct Device8 : IDirect3DDevice8 {
     rsCache[D3DRS_STENCILMASK]      = 0xFFFFFFFFu;
     rsCache[D3DRS_STENCILWRITEMASK] = 0xFFFFFFFFu;
     rsCache[D3DRS_TEXTUREFACTOR]    = 0xFFFFFFFFu;
+    // Same reasoning, per-stage: D3D8's own default for D3DTSS_MAXANISOTROPY is 1 (isotropic),
+    // but tssCache defaults to 0 like every other slot — so an unset GetTextureStageState would
+    // answer 0, not the truth. Harmless for rendering (StageState::maxAniso already starts at 1
+    // and that is what actually drives apply_sampler), but a mirror should not lie either.
+    tssCache[0][D3DTSS_MAXANISOTROPY] = 1;
+    tssCache[1][D3DTSS_MAXANISOTROPY] = 1;
   }
 
   HRESULT QueryInterface(REFIID, void** o) override { if (o) { *o = this; ++refs; } return D3D_OK; }
@@ -625,6 +631,11 @@ struct Device8 : IDirect3DDevice8 {
     // report existed there was no instrument for it anywhere, which is why the Generals
     // measurement could not say whether the engine uses it. Keyed on the position mask, so the
     // key space is the five blend widths rather than one key per FVF combination.
+    // This treats every Handle as an FVF combination, so a real (non-FVF) vertex-shader handle
+    // with a non-zero position field would also report here. That is fine only because
+    // CreateVertexShader() always refuses (D3DERR_INVALIDCALL) below, so no real shader handle
+    // can ever reach this function today — if that changes, this needs to branch on whether
+    // Handle is an FVF token before reading it as one.
     const DWORD pos = Handle & D3DFVF_POSITION_MASK;
     if (pos != D3DFVF_XYZ && pos != D3DFVF_XYZRHW && pos != 0)
       coverage::unhandled_vertex_format(pos);
@@ -747,6 +758,11 @@ struct Device8 : IDirect3DDevice8 {
         if (last != Value) {
           last = Value;
           char key[DX8WASM_TEL_NAME_MAX];
+          // Unlike coverage.cpp's per-kind budget (static_assert against DX8WASM_TEL_NAME_MAX),
+          // this key had no compile-time check — a rename here could silently truncate and merge
+          // two distinct measurements. "vertex" (6 chars) is the longer of the two %s values.
+          static_assert(sizeof("d3d8.fogmode.vertex.") - 1 + 8 < DX8WASM_TEL_NAME_MAX,
+                        "fog telemetry key may exceed DX8WASM_TEL_NAME_MAX and get truncated");
           std::snprintf(key, sizeof key, "d3d8.fogmode.%s.%08x",
                         State == D3DRS_FOGTABLEMODE ? "table" : "vertex", (unsigned)Value);
           dx8wasm_tel_counter(key, 1);
@@ -904,8 +920,14 @@ struct Device8 : IDirect3DDevice8 {
     // Clamp to the device limit, not to the request: asking for 16x on hardware that offers 4x
     // is not an error in D3D8, it is a request the driver narrows. limit == 0 means the
     // extension is absent, and then there is nothing to program at all.
-    if (const float limit = aniso_limit(); limit > 0.0f) {
-      const float want = s.maxAniso < 1 ? 1.0f : (float)s.maxAniso;
+    // aniso_limit() caches its query result for the lifetime of the GL context: if that context
+    // is lost and recreated, the cached value survives but the extension is not re-queried on the
+    // new context, so this can silently no-op after a context loss/recreate. This backend has no
+    // context-loss handling at all today, so that is accepted rather than built out here.
+    if (const float limit = aniso_limit(); limit > 0.0f && s.maxAniso > 1) {
+      // maxAniso == 1 is D3D8's own default (isotropic) and the GL default already matches it,
+      // so skip the call rather than reprogram the no-op default on every draw of every stage.
+      const float want = (float)s.maxAniso;
       glTexParameterf(GL_TEXTURE_2D, kTextureMaxAnisotropyExt, want > limit ? limit : want);
     }
   }
