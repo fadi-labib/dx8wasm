@@ -40,6 +40,27 @@ void dx8wasm_tel_counter(const char* name, uint32_t delta);
 // A completed timed region, in milliseconds.
 void dx8wasm_tel_span(const char* name, double ms);
 
+// The current value of something that is sampled rather than accumulated — a
+// simulation frame number, a heap size, a unit count. Emitted as one record per
+// call; the reducer keeps the series in claim order and does NOT sum it.
+//
+// Why this is not a counter or a span. A counter carries a *delta* and the reducer
+// sums by key, so a sampled absolute value fed to it produces a triangular-number
+// total (the same trap documented for "tel.dropped" below). A span carries a
+// *duration*, and its summary is count/total/max/mean — statistics that are
+// meaningless for a value whose interesting property is how it moves between
+// consecutive samples. The concrete case this was added for: proving a saved game
+// was restored. A restore makes the simulation frame number jump *backwards*, which
+// nothing in normal play does — but that is only observable if the series is kept in
+// order and compared sample-to-sample, which is what the reducer's `decreases`
+// statistic does. Aggregates cannot see it and timing observables lie about it (see
+// generals-dx8wasm docs/HANDOVER-2026-08-04.md §2.0).
+//
+// The value survives the round trip exactly: gauges serialise with full double
+// precision, unlike spans (6 significant digits, ample for a millisecond duration
+// but enough to corrupt a frame number past 999999).
+void dx8wasm_tel_gauge(const char* name, double value);
+
 // --- Consumer (single thread — the one that owns the GL context) -------------
 
 // Serialise queued records as NDJSON into `out` (always NUL-terminated) and remove

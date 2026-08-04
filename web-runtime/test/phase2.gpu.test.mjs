@@ -44,7 +44,7 @@ const SMOKES = [
   ['fogmode_smoke', [1, 1, 1, 1]],             // fog-mode transitions are recorded; coverage untouched
   ['caps_query_smoke', [1, 0, 0, 255]],        // capability queries agree with the texture path
   ['honest_stubs_smoke', [1, 0, 0, 255]],      // unimplemented entry points refuse, never lie
-  ['telemetry_smoke', [3, 1, 1, 1]],           // ring: 3 lines, span ms exact, post-flood drain exact+dropped>0, fully drained after
+  ['telemetry_smoke', [4, 1, 1, 1]],           // ring: 4 lines (log/counter/span/gauge), span ms exact, post-flood drain exact+dropped>0, fully drained after
   ['render_state_smoke', [153, 51, 102, 191]], // 50% red over blue bg (depth/cull/alpha checked internally)
   ['light_smoke', [153, 102, 51, 255]],        // directional diffuse: matDiff * lightDiff(0.6,0.4,0.2) at N·L=1
   ['matsource_smoke', [255, 0, 0, 255]],       // COLOR1 material source: lit diffuse from red vertex, not white material

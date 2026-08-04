@@ -19,13 +19,22 @@ const fixture = [
   '{"seq":7,"k":"span","n":"frame.logic","ms":"not-a-number"}',
   '{"seq":8,"k":"counter","n":"d3d8.unhandled.render_state.36"}',
   '{"seq":9,"k":"counter","n":"d3d8.zero_delta_probe","v":0}',
+  // A gauge series that advances, then jumps backwards once (what a saved-game
+  // restore looks like), then advances again. Frame 0 is a legitimate sample, and
+  // one gauge record is deliberately missing its `v`.
+  '{"seq":10,"k":"gauge","n":"logic.frame","v":0}',
+  '{"seq":11,"k":"gauge","n":"logic.frame","v":1200}',
+  '{"seq":12,"k":"gauge","n":"logic.frame","v":1201}',
+  '{"seq":13,"k":"gauge","n":"logic.frame","v":300}',
+  '{"seq":14,"k":"gauge","n":"logic.frame","v":301}',
+  '{"seq":15,"k":"gauge","n":"logic.frame"}',
 ];
 
 const r = reduce(fixture);
 assert.equal(r.counters['d3d8.unhandled.render_state.36'], 3, 'counters sum');
 assert.equal(r.spans.length, 2, 'two spans');
 assert.equal(r.logs[0].detail, 'engine up', 'log detail preserved');
-assert.equal(r.malformed, 5, 'unparseable JSON, unknown k, missing ms, non-numeric ms, and missing v all count as malformed');
+assert.equal(r.malformed, 6, 'unparseable JSON, unknown k, missing ms, non-numeric ms, missing counter v, and missing gauge v all count as malformed');
 assert.equal(r.summary['frame.logic'].max, 6.5, 'span max');
 assert.equal(r.summary['frame.logic'].mean, 4.5, 'span mean');
 assert.equal(Number.isNaN(r.summary['frame.logic'].total), false, 'a bad span record must not poison the summary with NaN');
@@ -33,6 +42,30 @@ assert.equal(Number.isNaN(r.summary['frame.logic'].total), false, 'a bad span re
 // increment on that call) and must be recorded, not treated as "missing" the way
 // `rec.v || 0` would.
 assert.equal(r.counters['d3d8.zero_delta_probe'], 0, 'a genuine 0 delta counter is recorded, not dropped as malformed');
+
+// --- gauges: a sampled series, not an aggregate ------------------------------
+const gs = r.gaugeSummary['logic.frame'];
+assert.equal(r.gauges.length, 5, 'five well-formed gauge samples; the one missing `v` is malformed');
+assert.equal(gs.count, 5, 'gauge count');
+assert.equal(gs.first, 0, 'a 0 sample is a real sample, not a missing one');
+assert.equal(gs.last, 301, 'last sample is the last in claim order, not the largest');
+assert.equal(gs.max, 1201, 'max is the high-water mark, not the last value');
+assert.equal(gs.min, 0, 'min spans the whole series');
+// The point of the whole kind: one backwards step is visible and quantified. A
+// summed counter would report 3003 and a span summary would report a mean; neither
+// can distinguish this series from one that only ever advanced.
+assert.equal(gs.decreases, 1, 'exactly one backwards step in the series');
+assert.equal(gs.maxDecrease, 901, 'the size of the backwards step, 1201 -> 300');
+// A monotonic series must report zero decreases — otherwise "decreases > 0" would be
+// evidence of nothing.
+assert.equal(reduce([
+  '{"seq":0,"k":"gauge","n":"m","v":1}',
+  '{"seq":1,"k":"gauge","n":"m","v":1}',
+  '{"seq":2,"k":"gauge","n":"m","v":2}',
+]).gaugeSummary['m'].decreases, 0, 'a non-decreasing series (including a repeat) reports no decreases');
+// Gauges are not spans: they must not leak into the span summary, whose fields the
+// perf work reads as a contract.
+assert.equal(r.summary['logic.frame'], undefined, 'a gauge does not appear in the span summary');
 
 const dir = mkdtempSync(join(tmpdir(), 'otel-'));
 const outFile = join(dir, 'trace.ndjson');

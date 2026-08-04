@@ -31,12 +31,12 @@
 
 namespace {
 
-enum Kind : uint8_t { KLOG = 0, KCOUNTER = 1, KSPAN = 2 };
+enum Kind : uint8_t { KLOG = 0, KCOUNTER = 1, KSPAN = 2, KGAUGE = 3 };
 
 struct Record {
     uint8_t  kind;
     uint32_t value;                        // counter delta
-    double   ms;                           // span duration
+    double   dbl;                          // span duration (ms), or gauge value
     char     name[DX8WASM_TEL_NAME_MAX];
     char     detail[DX8WASM_TEL_DETAIL_MAX];
 };
@@ -114,7 +114,7 @@ Record* claim(uint8_t kind, const char* name, uint32_t* outSlot) {
     Record* r = &g_ring[write % DX8WASM_TEL_CAPACITY];
     r->kind = kind;
     r->value = 0;
-    r->ms = 0.0;
+    r->dbl = 0.0;
     copy_field(r->name, DX8WASM_TEL_NAME_MAX, name);
     r->detail[0] = '\0';
     return r;
@@ -189,7 +189,15 @@ void dx8wasm_tel_counter(const char* name, uint32_t delta) {
 void dx8wasm_tel_span(const char* name, double ms) {
     uint32_t slot;
     if (Record* r = claim(KSPAN, name, &slot)) {
-        r->ms = ms;
+        r->dbl = ms;
+        commit(slot);
+    }
+}
+
+void dx8wasm_tel_gauge(const char* name, double value) {
+    uint32_t slot;
+    if (Record* r = claim(KGAUGE, name, &slot)) {
+        r->dbl = value;
         commit(slot);
     }
 }
@@ -228,14 +236,32 @@ uint32_t dx8wasm_tel_drain(char* out, uint32_t cap) {
             n = std::snprintf(line, sizeof line,
                               "{\"seq\":%u,\"k\":\"counter\",\"n\":\"%s\",\"v\":%u}\n",
                               g_seq, nameEsc, r.value);
-        } else {
+        } else if (r.kind == KSPAN) {
             n = std::snprintf(line, sizeof line,
                               "{\"seq\":%u,\"k\":\"span\",\"n\":\"%s\",\"ms\":%g}\n",
-                              g_seq, nameEsc, r.ms);
+                              g_seq, nameEsc, r.dbl);
+        } else if (r.kind == KGAUGE) {
+            // %.17g, not the %g used for spans. A span is a millisecond duration, for
+            // which 6 significant digits is ample; a gauge is an arbitrary sampled
+            // value, and %g would render a simulation frame number of 1234567 as
+            // "1.23457e+06" — which parses back to 1234570. Silently corrupting the
+            // value past 999999 would break the one property gauges exist to expose
+            // (how consecutive samples compare), so this round-trips exactly.
+            n = std::snprintf(line, sizeof line,
+                              "{\"seq\":%u,\"k\":\"gauge\",\"n\":\"%s\",\"v\":%.17g}\n",
+                              g_seq, nameEsc, r.dbl);
+        } else {
+            // A kind this drain does not know how to serialise. Fall through to the
+            // loss path below rather than guessing at a shape: emitting it as some
+            // other kind would hand the consumer a well-formed record that misstates
+            // what the producer measured, which is the one thing this ring must never
+            // do. n == 0 makes the next branch recycle the slot and count the loss.
+            n = 0;
         }
 
         if (n <= 0) {
-            // Formatting failure: don't fabricate a line and don't spin on it forever,
+            // Formatting failure (or an unserialisable kind, above): don't fabricate a
+            // line and don't spin on it forever,
             // but do count it as lost — every other loss path bumps g_dropped, so this
             // one must too, or an overflow could look smaller than it really was.
             g_dropped.fetch_add(1, std::memory_order_relaxed);

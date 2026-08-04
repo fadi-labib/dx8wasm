@@ -17,6 +17,7 @@
 // harness accepts pixel components within +-2 of expected, so a small-integer
 // or 0-vs-1 value baked into a tuple slot could pass by that tolerance alone
 // without actually exercising the assertion.
+// Gauge exactness is asserted the same way and for the same reason.
 // Reports [linesDrained, sawSpanMs, postFloodExactAndDropped, fullyDrainedAfter].
 #include "dx8wasm/telemetry.h"
 #include <emscripten.h>
@@ -81,6 +82,11 @@ int main() {
   dx8wasm_tel_log("boot", "engine up");
   dx8wasm_tel_counter("d3d8.unhandled_render_state", 3);
   dx8wasm_tel_span("frame.logic", 2.5);
+  // 1234567 is past %g's 6 significant digits deliberately: rendered with the span's
+  // format this gauge would serialise as "1.23457e+06" and parse back as 1234570.
+  // A simulation frame number corrupted like that destroys the only property gauges
+  // exist to expose (how consecutive samples compare), so the exactness is asserted.
+  dx8wasm_tel_gauge("logic.frame", 1234567.0);
 
   uint32_t n = dx8wasm_tel_drain(buf, sizeof buf);
   int lines = 0;
@@ -88,6 +94,16 @@ int main() {
 
   // The span must serialise its duration, not round it away.
   int sawSpanMs = strstr(buf, "\"n\":\"frame.logic\"") && strstr(buf, "\"ms\":2.5") ? 1 : 0;
+
+  // Reported via report_error (an exact string compare in the harness) rather than a
+  // pixel slot: the harness accepts pixel components within +-2, so a 0-vs-1 flag
+  // baked into a tuple could pass on tolerance alone without the assertion running.
+  // The full record shape is matched, not just the number, so a gauge emitted under
+  // the wrong `k` cannot satisfy it.
+  if (!strstr(buf, "\"k\":\"gauge\",\"n\":\"logic.frame\",\"v\":1234567}")) {
+    report_error("gauge did not serialise as an exact k=gauge record (check %.17g, not %g)");
+    return 1;
+  }
 
   // A drained ring is empty — no record is delivered twice. The buffer here is
   // comfortably larger than any single record, so "empty" cannot be confused with
