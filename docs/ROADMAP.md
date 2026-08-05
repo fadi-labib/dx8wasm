@@ -61,7 +61,7 @@ Phased **clean-room re-derivation** into a decoupled, Linux-CI'd SDK. The workin
 - Deliverable: a conformance matrix (which D3D8 states/ops are covered) built against that target.
 
 ## Phase 4 — CI & tests
-- ✅ **CI harness done:** `scripts/check.sh` (mechanical guardrails: SPDX headers, commit-authorship, no saturating 32-bit casts of `emscripten_get_now()`) + `scripts/ci.sh` (guardrails + pinned-toolchain check + the full test suite, 35 smokes across the d3d8webgl/compatlib/telemetry surface — every `CMakeLists.txt` executable target except `conformance`, `minigame`, and `spin_demo`) + `.github/workflows/ci.yml`, which just invokes `ci.sh`. Runs locally today. The "once this repo has a remote" caveat this line used to carry is obsolete —
+- ✅ **CI harness done:** `scripts/check.sh` (mechanical guardrails: SPDX headers, commit-authorship, no saturating 32-bit casts of `emscripten_get_now()`) + `scripts/ci.sh` (guardrails + pinned-toolchain check + the full test suite, 36 smokes across the d3d8webgl/compatlib/telemetry surface — every `CMakeLists.txt` executable target except `conformance`, `minigame`, and `spin_demo`) + `.github/workflows/ci.yml`, which just invokes `ci.sh`. Runs locally today. The "once this repo has a remote" caveat this line used to carry is obsolete —
 `origin` is `github.com/fadi-labib/dx8wasm` and `main` is pushed to it — but **whether a
 GitHub-hosted runner can execute this suite is unverified**: it needs emsdk 6.0.2 pinned to the exact
 patch version plus a Chromium with a working WebGL2 (SwiftShader) context, and the local run is the

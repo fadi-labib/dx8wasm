@@ -43,7 +43,14 @@ set_target_properties(platform_smoke PROPERTIES SUFFIX ".js")
 add_library(dx8_d3d8webgl STATIC
   runtime/d3d8webgl/d3d8.cpp runtime/d3d8webgl/device.cpp
   runtime/graphics-ff/ff_shader.cpp runtime/coverage/coverage.cpp runtime/runtime.cpp
-  runtime/telemetry/telemetry.cpp)
+  runtime/telemetry/telemetry.cpp
+  # opfs_bridge.cpp is a platform service and lives under runtime/platform/, but it is
+  # built into THIS library rather than dx8_platform because it calls the telemetry
+  # producers, which live here: putting it in dx8_platform would make the two static
+  # libraries mutually dependent, and wasm-ld resolves a static archive only against
+  # archives listed after it. The engine's own dx8wasm_backend target compiles all of
+  # these sources into a single library, so the distinction does not exist there.
+  runtime/platform/opfs_bridge.cpp)
 target_include_directories(dx8_d3d8webgl PUBLIC runtime runtime/d3d8 runtime/include)
 target_link_libraries(dx8_d3d8webgl PUBLIC dx8_platform)
 target_compile_options(dx8_d3d8webgl PRIVATE ${DX8_SDL3})
@@ -245,6 +252,12 @@ target_include_directories(compat_d3dx_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(compat_d3dx_smoke PRIVATE dx8_compat)
 target_link_options(compat_d3dx_smoke PRIVATE ${DX8_WEBGL_LINK})
 set_target_properties(compat_d3dx_smoke PROPERTIES SUFFIX ".js")
+
+add_executable(opfs_smoke runtime/test/opfs_smoke.cpp)
+target_include_directories(opfs_smoke PRIVATE runtime runtime/d3d8 runtime/include)
+target_link_libraries(opfs_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(opfs_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(opfs_smoke PROPERTIES SUFFIX ".js")
 
 add_executable(determinism_smoke runtime/test/determinism_smoke.cpp)
 target_include_directories(determinism_smoke PRIVATE runtime runtime/d3d8 runtime/include runtime/test)
