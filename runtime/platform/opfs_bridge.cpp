@@ -30,6 +30,9 @@ static int32_t         g_sizes[GX_OPFS_MAX];
 static int             g_count = 0;
 static bool            g_listed = false;
 static bool            g_listFailed = false;
+static uint32_t        g_pendCount = 0;    // reads not yet reported to telemetry (see below)
+static uint32_t        g_pendBytes = 0;
+#define GX_OPFS_TEL_BATCH 64
 
 extern "C" {
 
@@ -146,8 +149,22 @@ int dx8wasm_opfs_read(int idx, uint32_t offset, void* dst, uint32_t len) {
     if (got <= 0) break;                  // at or past end of archive
     memcpy(static_cast<unsigned char*>(dst) + done, gx_opfs_window(g_block), static_cast<size_t>(got));
     done += static_cast<uint32_t>(got);
-    dx8wasm_tel_counter("opfs.read.count", 1);
-    dx8wasm_tel_counter("opfs.read.bytes", static_cast<uint32_t>(got));
+    // Batch the counters. One record per read floods the 1024-entry telemetry ring, and a full
+    // ring drops records and reports "tel.dropped" — which by this SDK's own contract invalidates
+    // every measurement in that window, not just these two. This is not hypothetical: the game
+    // engine's archive-table parse issues reads by the hundred thousand (it reads each archived
+    // filename one byte at a time), and the first full-stack run of this feature reported 845
+    // reads for what was certainly far more. The reducer sums counter deltas, so a batched delta
+    // is exactly as accurate as N separate ones; the only cost is that up to GX_OPFS_TEL_BATCH-1
+    // reads go unreported if the run ends mid-batch.
+    g_pendCount++;
+    g_pendBytes += static_cast<uint32_t>(got);
+    if (g_pendCount >= GX_OPFS_TEL_BATCH || g_pendBytes >= 1024u * 1024u) {
+      dx8wasm_tel_counter("opfs.read.count", g_pendCount);
+      dx8wasm_tel_counter("opfs.read.bytes", g_pendBytes);
+      g_pendCount = 0;
+      g_pendBytes = 0;
+    }
     if (static_cast<uint32_t>(got) < chunk) break;   // short read: end of archive
   }
   return static_cast<int>(done);
