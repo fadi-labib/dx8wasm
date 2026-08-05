@@ -24,9 +24,10 @@ browser. If you are *consuming* the SDK to build a game/app, read
 | `runtime/d3d8webgl/` | The device — translates D3D8 calls to WebGL2 |
 | `runtime/graphics-ff/` | Fixed-function shader generator (FVF/state → cached GLSL program) |
 | `runtime/coverage/` | Coverage/fallback layer + `contract.h` introspection |
-| `runtime/platform/` | SDL3 → WebGL2 window/context/input seam |
+| `runtime/platform/` | SDL3 → WebGL2 window/context/input seam, plus `opfs_bridge.cpp` (opt-in on-demand OPFS reads; built into `dx8_d3d8webgl`, see `docs/ARCHITECTURE.md`) |
 | `runtime/compatlib/` | Win32 → POSIX shims (tiered; see `docs/COMPATLIB.md`) |
 | `runtime/include/dx8wasm/contract.h` | The dx8wasm-specific ABI (init, input, coverage) |
+| `runtime/include/dx8wasm/opfs.h` | Optional: ranged reads from OPFS instead of resident archives (`docs/SDK_REFERENCE.md` §4) |
 | `runtime/test/` | Headless pixel/self-test smokes (one per feature) |
 | `web-runtime/` | Phase 1 asset loader + the JS test harness |
 | `asset-tools/` | GAXD asset packer |

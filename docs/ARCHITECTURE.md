@@ -21,6 +21,7 @@ workflow see [`AGENTS.md`](../AGENTS.md).
 │ runtime/runtime.cpp        dx8wasm_init/shutdown/has_cap    │
 ├───────────────────────────────────────────────────────────┤
 │ runtime/platform/          SDL3 → WebGL2 context + input    │  lib: dx8_platform
+│   opfs_bridge.cpp   blocking ranged reads from OPFS (opt-in) │  (built into dx8_d3d8webgl)
 ├───────────────────────────────────────────────────────────┤
 │ runtime/compatlib/         Win32 → POSIX/emscripten shims   │  lib: dx8_compat (independent)
 └───────────────────────────────────────────────────────────┘
@@ -34,7 +35,12 @@ Three static libraries, built by the top-level `CMakeLists.txt` against the
   lifecycle (`create_gl_context`/`present`/`destroy`/`gl_context_alive`) and the
   input pump (`dx8wasm_pump`).
 - **`dx8_d3d8webgl`** — the translation layer; depends on `dx8_platform`. Contains
-  the device, the shader generator, the coverage layer, and the runtime init.
+  the device, the shader generator, the coverage layer, the runtime init, the
+  telemetry ring, and `runtime/platform/opfs_bridge.cpp`. That last one lives under
+  `runtime/platform/` because it is a platform service, but it is compiled into *this*
+  library because it calls the telemetry producers: putting it in `dx8_platform` would
+  make the two archives mutually dependent, and wasm-ld resolves a static archive only
+  against archives listed after it.
 - **`dx8_compat`** — the Win32 shims; standalone (only depends on libc + the
   emscripten FS). A game links all three.
 

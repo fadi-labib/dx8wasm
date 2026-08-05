@@ -291,14 +291,67 @@ Full surface and roadmap: [`COMPATLIB.md`](COMPATLIB.md).
 
 ---
 
-## 4. Minimal example
+## 4. On-demand OPFS reads — `runtime/include/dx8wasm/opfs.h`
+
+Optional. For a game whose data is large read-only archives, this serves ranged reads from the
+browser's Origin Private File System instead of holding the archives in the wasm heap. Measured in
+the Generals port: 1133 MiB of archive resident → 0, whole-browser Pss 1892 → 807 MiB.
+
+```c
+int       dx8wasm_opfs_init(void);            // allocate the control block; 1 if this call did it
+uintptr_t dx8wasm_opfs_control_addr(void);    // hand to the page: {memory: wasmMemory.buffer, addr}
+int       dx8wasm_opfs_ready(void);           // 1 once an I/O worker answered; doubles as the feature flag
+int       dx8wasm_opfs_count(void);
+int       dx8wasm_opfs_index_of(const char* name);   // by base name, -1 if not registered
+int       dx8wasm_opfs_size_of(int idx);
+int       dx8wasm_opfs_read(int idx, uint32_t offset, void* dst, uint32_t len);  // bytes read, or -1
+```
+
+**Call `dx8wasm_opfs_read` only from a thread that may block** — under `-pthread`/`PROXY_TO_PTHREAD`
+that is the engine thread, which is a Web Worker. It publishes a request into a control block that
+lives in the wasm heap (already a `SharedArrayBuffer`, so no separate SAB is needed) and sleeps on
+`Atomics.wait` until an I/O worker fills a 4 MiB data window. Requests larger than the window are
+chunked internally and the result is contiguous.
+
+**Why not an Emscripten filesystem backend or `FS.registerDevice`.** Measured: a `read()` syscall's JS
+handler runs on the **main browser thread**, where `createSyncAccessHandle` does not exist and
+blocking is forbidden. So the interception must sit one layer *above* the filesystem, where the caller
+is the engine thread. This is not a preference — a backend cannot work in this build.
+
+**The page owns the worker.** This SDK provides the blocking primitive and the wire format
+(`runtime/platform/opfs_internal.h`: an 8-slot `int32` header then the window); the consumer supplies
+the JS side that holds the OPFS handles and services requests. A reference implementation is
+`web/opfs-io-worker.js` in the Generals port. Two things that side must get right, both learned the
+hard way: sleep on the state's *current* value rather than a fixed 0 (otherwise it spins a core
+between reply and reset, forever if the caller dies mid-read), and take file sizes from storage rather
+than from the caller's list, since the reader clamps every read against them.
+
+**Failure contract, per this SDK's usual rule.** A wedged worker times out after 5000 ms, counts
+`opfs.read.timeout`, logs `opfs.worker_stalled` and returns -1 — never a silent retry loop, never an
+indefinite stall. With no worker attached `dx8wasm_opfs_ready()` stays 0, so a consumer that gates on
+it keeps whatever it did before. Reads are counted in `opfs.read.count` / `opfs.read.bytes`, batched
+64 at a time so they cannot flood the telemetry ring (a flooded ring drops records and invalidates
+every counter in the window — see `dx8wasm_tel_dropped`).
+
+⚠️ **Callers should buffer small reads.** The primitive is a cross-thread round trip, so a caller that
+reads a byte at a time — which archive-table parsers do — will crawl. Generals' `OpfsFile` serves
+anything up to 4 KiB from a lookahead buffer; without it the async-fallback path managed ~370 reads/s
+and never finished booting.
+
+Protocol coverage: `runtime/test/opfs_smoke.cpp` exercises window chunking, contiguity across
+chunks, short reads at EOF, a bad index, and that a failed read leaves the block idle — with a test
+responder standing in for the worker, so no browser worker is involved.
+
+---
+
+## 5. Minimal example
 
 The smallest complete program is [`examples/minigame/minigame.cpp`](../examples/minigame/minigame.cpp):
 `dx8wasm_init` → `Direct3DCreate8` → `CreateDevice` → per-frame `dx8wasm_pump` +
 `Clear`/`DrawIndexedPrimitive`/`Present`, all under `emscripten_set_main_loop`.
 Run it: `node scripts/minigame.mjs`.
 
-## 5. Filling gaps
+## 6. Filling gaps
 
 When you hit an unimplemented D3D8 token, the coverage callback prints it — that's
 a feature to add under `runtime/` (see [`AGENTS.md`](../AGENTS.md)). When you hit
@@ -463,6 +516,7 @@ workflow see [`AGENTS.md`](../AGENTS.md).
 │ runtime/runtime.cpp        dx8wasm_init/shutdown/has_cap    │
 ├───────────────────────────────────────────────────────────┤
 │ runtime/platform/          SDL3 → WebGL2 context + input    │  lib: dx8_platform
+│   opfs_bridge.cpp   blocking ranged reads from OPFS (opt-in) │  (built into dx8_d3d8webgl)
 ├───────────────────────────────────────────────────────────┤
 │ runtime/compatlib/         Win32 → POSIX/emscripten shims   │  lib: dx8_compat (independent)
 └───────────────────────────────────────────────────────────┘
@@ -476,7 +530,12 @@ Three static libraries, built by the top-level `CMakeLists.txt` against the
   lifecycle (`create_gl_context`/`present`/`destroy`/`gl_context_alive`) and the
   input pump (`dx8wasm_pump`).
 - **`dx8_d3d8webgl`** — the translation layer; depends on `dx8_platform`. Contains
-  the device, the shader generator, the coverage layer, and the runtime init.
+  the device, the shader generator, the coverage layer, the runtime init, the
+  telemetry ring, and `runtime/platform/opfs_bridge.cpp`. That last one lives under
+  `runtime/platform/` because it is a platform service, but it is compiled into *this*
+  library because it calls the telemetry producers: putting it in `dx8_platform` would
+  make the two archives mutually dependent, and wasm-ld resolves a static archive only
+  against archives listed after it.
 - **`dx8_compat`** — the Win32 shims; standalone (only depends on libc + the
   emscripten FS). A game links all three.
 
