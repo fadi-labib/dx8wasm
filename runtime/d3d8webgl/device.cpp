@@ -53,6 +53,38 @@ void warn_once(const char* what) {   // one line per distinct unimplemented meth
   std::fprintf(stderr, "[dx8wasm] %s: stubbed (Phase C)\n", what);
 }
 
+// --- per-frame cost accounting for paths OUTSIDE the draw calls ---------------------------
+// Round 1 of this instrumentation showed draws are ~3% of the frame (264/frame, 0.79 ms) and the
+// swap 0.01 ms, while the frame differs by 24 ms between ANGLE backends. So the cost is in the
+// calls that were COUNTED but not TIMED. These accumulate it:
+//   gl.state_ms   the ~750 SetRenderState/SetTexture/SetTextureStageState/SetTransform per frame
+//   gl.upload_ms  texture uploads (UnlockRect -> glTexImage2D) and static buffer uploads
+//                 (GLBuffer::Unlock -> glBufferData). The DrawPrimitiveUP paths also upload, but
+//                 those are inside the draw functions and already counted in gl.draw_ms.
+//
+// File-scope because GLBuffer and the texture class have no Device8 to hang a member on. Safe
+// because every GL call in this backend happens on the one engine thread (PROXY_TO_PTHREAD).
+// Doubles throughout, never cast to a 32-bit integer -- that saturating fptoui is what silently
+// killed the telemetry pump once (runtime/telemetry/telemetry.cpp, now_ms()).
+double   g_frameStateMs = 0.0;
+double   g_frameUploadMs = 0.0;
+uint32_t g_frameUploads = 0;
+// Split out, because "uploads are 92% of the frame" is a diagnosis and "which kind" is a fix.
+// tex = UnlockRect -> glTexImage2D; buf = GLBuffer::Unlock -> glBufferData (the whole staging
+// vector, every Unlock, with a STATIC_DRAW hint -- a prime suspect for a per-frame dynamic VB).
+double   g_frameTexUploadMs = 0.0;
+double   g_frameBufUploadMs = 0.0;
+uint32_t g_frameTexUploads = 0;
+uint32_t g_frameBufUploads = 0;
+
+// Adds its lifetime to `acc`. Two clock reads per call, so the totals are upper bounds on the
+// real cost -- documented rather than corrected for, since we are looking for a 24 ms gap.
+struct ScopedMs {
+  double& acc; double t0;
+  explicit ScopedMs(double& a) : acc(a), t0(emscripten_performance_now()) {}
+  ~ScopedMs() { acc += emscripten_performance_now() - t0; }
+};
+
 // A GPU buffer backed by a CPU staging vector. Lock hands out a pointer into
 // the staging bytes; Unlock uploads them to the GL buffer object.
 struct GLBuffer {
@@ -65,6 +97,8 @@ struct GLBuffer {
     *pp = cpu.data() + off; return D3D_OK;
   }
   HRESULT Unlock() {
+    ScopedMs _u(g_frameUploadMs); ScopedMs _b(g_frameBufUploadMs);
+    ++g_frameUploads; ++g_frameBufUploads;
     if (!glbuf) glGenBuffers(1, &glbuf);
     glBindBuffer(target, glbuf);
     glBufferData(target, (GLsizeiptr)cpu.size(), cpu.data(), GL_STATIC_DRAW);
@@ -304,6 +338,8 @@ struct Texture8 : IDirect3DTexture8 {
   // single-level impl) so existing pixel smokes stay bit-identical; real sampler
   // state is applied elsewhere.
   void upload_level(UINT l) {
+    ScopedMs _u(g_frameUploadMs); ScopedMs _t(g_frameTexUploadMs);
+    ++g_frameUploads; ++g_frameTexUploads;
     if (l >= levels.size()) return;
     // Reference-aligned mip handling (Leondore d3d8webgl): for a MULTI-LEVEL texture the
     // BASE level is authoritative -- upload level 0 and GPU-generate the whole chain,
@@ -636,6 +672,16 @@ struct Device8 : IDirect3DDevice8 {
     dx8wasm_tel_gauge("gl.draws", (double)frameDraws);
     dx8wasm_tel_gauge("gl.draw_ms", frameDrawMs);
     dx8wasm_tel_gauge("gl.state_calls", (double)frameStateCalls);
+    dx8wasm_tel_gauge("gl.state_ms", g_frameStateMs);
+    dx8wasm_tel_gauge("gl.upload_ms", g_frameUploadMs);
+    dx8wasm_tel_gauge("gl.uploads", (double)g_frameUploads);
+    dx8wasm_tel_gauge("gl.tex_upload_ms", g_frameTexUploadMs);
+    dx8wasm_tel_gauge("gl.buf_upload_ms", g_frameBufUploadMs);
+    dx8wasm_tel_gauge("gl.tex_uploads", (double)g_frameTexUploads);
+    dx8wasm_tel_gauge("gl.buf_uploads", (double)g_frameBufUploads);
+    g_frameStateMs = 0.0; g_frameUploadMs = 0.0; g_frameUploads = 0;
+    g_frameTexUploadMs = 0.0; g_frameBufUploadMs = 0.0;
+    g_frameTexUploads = 0; g_frameBufUploads = 0;
     frameDraws = 0;
     frameDrawMs = 0.0;
     frameStateCalls = 0;
@@ -694,7 +740,7 @@ struct Device8 : IDirect3DDevice8 {
     return D3D_OK;
   }
   HRESULT SetTexture(DWORD Stage, IDirect3DBaseTexture8* t) override {
-    ++frameStateCalls;
+    ++frameStateCalls; ScopedMs _s(g_frameStateMs);
     auto* n = static_cast<Texture8*>(t);
     Texture8** slot = Stage == 0 ? &texture : (Stage == 1 ? &texture1 : nullptr);
     if (!slot) return D3D_OK;   // only 2 stages
@@ -715,7 +761,7 @@ struct Device8 : IDirect3DDevice8 {
     }
   }
   HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
-    ++frameStateCalls;
+    ++frameStateCalls; ScopedMs _s(g_frameStateMs);
     // Record before the stage cutoff below: D3D's Get returns whatever was Set, whether or not
     // the driver acts on it, and a save/restore bracket depends on exactly that.
     if (Stage < kStageCount && Type < kStageStateCount) tssCache[Stage][Type] = Value;
@@ -753,7 +799,7 @@ struct Device8 : IDirect3DDevice8 {
     return D3D_OK;
   }
   HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) override {
-    ++frameStateCalls;
+    ++frameStateCalls; ScopedMs _s(g_frameStateMs);
     // Record every state, handled or not, so GetRenderState can report it back. Engines
     // bracket passes with Get(X,&old)/Set(X,temp)/Set(X,old); a Get that reports 0 turns
     // the restore into "disable", which is invisible until the bracketed state matters.
@@ -872,7 +918,7 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT SetMaterial(const D3DMATERIAL8* p) override { if (!p) return D3DERR_INVALIDCALL; material = *p; return D3D_OK; }
   HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) override {
-    ++frameStateCalls;
+    ++frameStateCalls; ScopedMs _s(g_frameStateMs);
     if (!pMatrix) return D3DERR_INVALIDCALL;
     float* dst = State == D3DTS_WORLD ? world : State == D3DTS_VIEW ? view : State == D3DTS_PROJECTION ? proj : nullptr;
     // Stage texture matrices (D3DTS_TEXTURE0 = 16, stage 1 = 17). The terrain
