@@ -594,7 +594,58 @@ struct Device8 : IDirect3DDevice8 {
     if (Flags & D3DCLEAR_ZBUFFER) glDepthMask(zWrite ? GL_TRUE : GL_FALSE);
     return D3D_OK;
   }
-  HRESULT Present(const RECT*, const RECT*, HWND, const RGNDATA*) override { platform::present(); return D3D_OK; }
+  // --- per-frame draw-call instrumentation -------------------------------------------------
+  // Measured 2026-08-06: this translation layer is CPU-bound in PER-DRAW-CALL cost, not
+  // GPU-bound. An integrated AMD GPU beat an RTX 4080 on the same build until Chrome's ANGLE
+  // backend was moved off NVIDIA's OpenGL driver onto Vulkan (2.3x, 30 -> 71 FPS), and the 4080
+  // sat at idle clocks (P8, 210 MHz, 10 W of 320) mid-skirmish because commands were not
+  // reaching it fast enough to wake it. See
+  // generals-dx8wasm/docs/RESULTS-2026-08-06-angle-backend.md.
+  //
+  // "Reduce the number of draw calls" is the obvious response to that, and until these two
+  // gauges existed it was an ASSUMPTION: nothing measured how many calls a frame issues or what
+  // share of the frame they account for. gl.draws answers the first, gl.draw_ms the second.
+  //
+  // Held as double, never cast to a 32-bit integer. Deltas of emscripten_performance_now() are
+  // sub-millisecond doubles; the saturating float->i32 fptoui is exactly what silently killed
+  // the telemetry pump once already (runtime/telemetry/telemetry.cpp, now_ms()). The clock is
+  // thread-relative, which is fine here because only deltas within one thread are ever taken.
+  //
+  // Cost of measuring: two clock reads per draw call. At a few thousand calls a frame that is
+  // well under the ~30 ms being investigated, but it is not free -- treat gl.draw_ms as an
+  // upper bound on the real submission cost rather than an exact figure.
+  uint32_t frameDraws = 0;
+  double   frameDrawMs = 0.0;
+  // Draw calls turned out to be ~2% of the frame (203/frame, 0.58 ms), so the cost is NOT in
+  // drawing. The two remaining candidates on this side of the boundary are the volume of STATE
+  // changes -- ANGLE-over-GL validates each one, and a fixed-function engine emits far more of
+  // them than draws -- and the SWAP, where a GL driver does its deferred work. Count the first,
+  // time the second.
+  uint32_t frameStateCalls = 0;
+  struct DrawTimer {
+    Device8* d; double t0;
+    explicit DrawTimer(Device8* dev) : d(dev), t0(emscripten_performance_now()) {}
+    ~DrawTimer() { d->frameDrawMs += emscripten_performance_now() - t0; ++d->frameDraws; }
+  };
+
+  HRESULT Present(const RECT*, const RECT*, HWND, const RGNDATA*) override {
+    // Emitted at the frame boundary as GAUGES, not counters: both are absolute values for the
+    // frame just finished, and the reducer sums counters by key (which would turn a per-frame
+    // count into a meaningless running total -- see telemetry.h on why a sampled value fed to a
+    // counter produces triangular numbers).
+    dx8wasm_tel_gauge("gl.draws", (double)frameDraws);
+    dx8wasm_tel_gauge("gl.draw_ms", frameDrawMs);
+    dx8wasm_tel_gauge("gl.state_calls", (double)frameStateCalls);
+    frameDraws = 0;
+    frameDrawMs = 0.0;
+    frameStateCalls = 0;
+    // One clock pair per frame, so this costs nothing measurable. If a GL driver is doing its
+    // deferred work at swap time, it lands here and nowhere else.
+    const double p0 = emscripten_performance_now();
+    platform::present();
+    dx8wasm_tel_gauge("gl.present_ms", emscripten_performance_now() - p0);
+    return D3D_OK;
+  }
   HRESULT BeginScene() override { return D3D_OK; }
   HRESULT EndScene() override { return D3D_OK; }
 
@@ -643,6 +694,7 @@ struct Device8 : IDirect3DDevice8 {
     return D3D_OK;
   }
   HRESULT SetTexture(DWORD Stage, IDirect3DBaseTexture8* t) override {
+    ++frameStateCalls;
     auto* n = static_cast<Texture8*>(t);
     Texture8** slot = Stage == 0 ? &texture : (Stage == 1 ? &texture1 : nullptr);
     if (!slot) return D3D_OK;   // only 2 stages
@@ -663,6 +715,7 @@ struct Device8 : IDirect3DDevice8 {
     }
   }
   HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override {
+    ++frameStateCalls;
     // Record before the stage cutoff below: D3D's Get returns whatever was Set, whether or not
     // the driver acts on it, and a save/restore bracket depends on exactly that.
     if (Stage < kStageCount && Type < kStageStateCount) tssCache[Stage][Type] = Value;
@@ -700,6 +753,7 @@ struct Device8 : IDirect3DDevice8 {
     return D3D_OK;
   }
   HRESULT SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) override {
+    ++frameStateCalls;
     // Record every state, handled or not, so GetRenderState can report it back. Engines
     // bracket passes with Get(X,&old)/Set(X,temp)/Set(X,old); a Get that reports 0 turns
     // the restore into "disable", which is invisible until the bracketed state matters.
@@ -818,6 +872,7 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT SetMaterial(const D3DMATERIAL8* p) override { if (!p) return D3DERR_INVALIDCALL; material = *p; return D3D_OK; }
   HRESULT SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix) override {
+    ++frameStateCalls;
     if (!pMatrix) return D3DERR_INVALIDCALL;
     float* dst = State == D3DTS_WORLD ? world : State == D3DTS_VIEW ? view : State == D3DTS_PROJECTION ? proj : nullptr;
     // Stage texture matrices (D3DTS_TEXTURE0 = 16, stage 1 = 17). The terrain
@@ -1040,6 +1095,7 @@ struct Device8 : IDirect3DDevice8 {
     return true;
   }
   HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE Type, UINT, UINT, UINT StartIndex, UINT PrimitiveCount) override {
+    DrawTimer _dt(this);
     GLenum mode; GLsizei icount;
     if (!stream || !indices || !prim_info(Type, PrimitiveCount, mode, icount)) return D3DERR_INVALIDCALL;
     glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
@@ -1199,6 +1255,7 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT SetCurrentTexturePalette(UINT) override { return D3D_OK; }
   HRESULT GetCurrentTexturePalette(UINT* n) override { if (n) *n = 0; return D3D_OK; }
   HRESULT DrawPrimitive(D3DPRIMITIVETYPE Type, UINT StartVertex, UINT PrimitiveCount) override {
+    DrawTimer _dt(this);
     GLenum mode; GLsizei vcount;
     if (!stream || !prim_info(Type, PrimitiveCount, mode, vcount)) return D3DERR_INVALIDCALL;
     glBindBuffer(GL_ARRAY_BUFFER, stream->b.glbuf);
@@ -1209,6 +1266,7 @@ struct Device8 : IDirect3DDevice8 {
   // User-pointer draws: vertex/index data is inline (no D3D buffer). Stream it
   // through reused scratch GL buffers. Common for UI/particles/dynamic geometry.
   HRESULT DrawPrimitiveUP(D3DPRIMITIVETYPE Type, UINT PrimitiveCount, const void* pVertexData, UINT VertexStride) override {
+    DrawTimer _dt(this);
     GLenum mode; GLsizei vcount;
     if (!pVertexData || !prim_info(Type, PrimitiveCount, mode, vcount)) return D3DERR_INVALIDCALL;
     if (!scratchVB) glGenBuffers(1, &scratchVB);
@@ -1221,6 +1279,7 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE Type, UINT MinVertexIndex, UINT NumVertices, UINT PrimitiveCount,
                                  const void* pIndexData, D3DFORMAT IndexDataFormat, const void* pVertexData, UINT VertexStride) override {
+    DrawTimer _dt(this);
     GLenum mode; GLsizei icount;
     if (!pIndexData || !pVertexData || !prim_info(Type, PrimitiveCount, mode, icount)) return D3DERR_INVALIDCALL;
     const bool i32 = IndexDataFormat == D3DFMT_INDEX32;
