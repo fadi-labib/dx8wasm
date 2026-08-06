@@ -86,11 +86,37 @@ is a phase in its own right; they are integration follow-ups this roadmap tracks
 rather than as a numbered phase.
 
 ## ⏸️ Parked — Phase 5 — WebGPU backend
-Parked: not started, and not currently justified. The WebGL2 backend already runs a full
-commercial RTS (Generals) at 60 FPS on a real GPU, so a second graphics backend would add
-real risk and ongoing maintenance against no current user need. **Unpark when** a target
-needs compute shaders WebGL2 can't express, or if browser WebGL2 support meaningfully
-degrades.
+Parked: not started, and still not justified — but the premise below was corrected on
+2026-08-06 and now carries a condition it did not before.
+
+The WebGL2 backend runs a full commercial RTS (Generals) at 60+ FPS on a real GPU
+**on ANGLE/Vulkan**. It does **not** on Chrome's actual Linux default. Same machine, same
+build, same GPU, live skirmish (RTX 4080 SUPER + i9-14900K):
+
+| Chrome's ANGLE backend | frame.client mean | FPS | GPU state |
+|---|---|---|---|
+| OpenGL (Linux default) | 32.8 ms | **30** | P8, 210 MHz, 10 W — *idle mid-game* |
+| Vulkan (`--use-angle=vulkan`) | 14.0 ms | **71** | P0, 2715 MHz, 55 W |
+
+2.3× from a browser flag. The port is **CPU-bound in per-draw-call driver overhead**, not
+GPU-bound: an integrated AMD GPU on Mesa beat that 4080 until the flag was set, because the
+card was never the constraint. Measurement, and the seven hypotheses it eliminated:
+`generals-dx8wasm/docs/RESULTS-2026-08-06-angle-backend.md`.
+
+This does **not** unpark Phase 5. A browser flag already reaches 71 FPS, so a second backend
+would be a large rewrite to buy a number that is already available — and WebGPU lowers the
+cost *per* draw call without reducing the *number* of them, which is the part that would also
+help the Mesa machines a flag does nothing for. Batching in the WebGL2 backend is the cheaper
+move and helps every vendor.
+
+**Unpark when** a target needs compute shaders WebGL2 can't express; or if browser WebGL2
+support meaningfully degrades; **or** if per-draw-call overhead is measured to be the binding
+constraint *after* batching — i.e. the fixed-function path is submitting the fewest calls it
+reasonably can and the driver cost still dominates. That third condition is new, and it is the
+one this finding actually exposed: the WebGL2 path's frame rate is currently at the mercy of a
+driver choice outside the SDK's control. Before spending it, split the client-side frame span
+into sub-spans (draw submission / state changes / texture uploads) — until that exists,
+"WebGPU would fix this" is an assumption, not a measurement.
 - Second graphics backend behind the same interface: fixed-function → SPIR-V (DXVK-modeled) → WGSL (Tint/Naga); SM1.x shaders → WGSL. Share the FF core with WebGL2 via SPIRV-Cross (→GLSL).
 - Deliverable (if unparked): the headless smoke test passes on both backends.
 
