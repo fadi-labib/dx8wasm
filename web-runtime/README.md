@@ -17,7 +17,7 @@ this repo's Generals-specific harnesses on 2026-07-31 for exactly that reason.
 |---|---|
 | `gaxd.js` — pure GAXD v2 decoder (browser + Node) | ✅ done, cross-validated |
 | `loader.js` — Range streaming + OPFS cache (bounded memory) | ✅ done, headlessly verified |
-| `onboard.js` + `onboard.html` — client-side asset import (own-the-assets ports) | ✅ done, headlessly verified |
+| `onboard.js` + `onboard.html` — client-side asset import (own-the-assets ports) | ✅ done, headlessly verified — but **no longer the path Generals runs**, see below |
 | `coi-serviceworker.js` — cross-origin isolation for static hosts | ✅ done |
 | `index.html` — load-and-list harness | ✅ done |
 | `vendor/brotli/` — brotli-wasm web decoder (Apache-2.0) | ✅ vendored |
@@ -31,6 +31,25 @@ this repo's Generals-specific harnesses on 2026-07-31 for exactly that reason.
   Copyrighted game data never touches a server — this is how an *own-the-assets*
   port (Generals, etc.) ships legally and still plays for a stranger. Chromium/
   Edge only (multi-GB folders can't use the in-memory `<input>` fallback).
+
+### `onboard.js` is a reference implementation, not Generals' live path (2026-08-06)
+
+Read this before improving it. The Generals port **does not use `onboard.js`**. It grew its own
+onboarding into `generals-dx8wasm/web/byo-*.js`: an eight-step wizard, an install manifest, size-based
+verification on every boot, and targeted repair of evicted files. That decision is recorded as D4 in
+`generals-dx8wasm/docs/superpowers/specs/2026-08-06-byo-onboarding-wizard-design.md`, along with its
+stated cost — **two onboarding implementations now exist and will drift.**
+
+This one was deliberately kept rather than deleted: it is generic over games via a profile object,
+it is covered by `test/onboard.browser.test.mjs` in this repo's `npm test`, and it is the thing a
+*second* own-the-assets port would start from. But it is now the simpler of the two, and a fix made
+here does not reach Generals.
+
+Two things worth stealing from the game-repo version if you extend this one, both learned the
+expensive way: a folder handle persisted in IndexedDB is what makes a targeted repair possible
+instead of a multi-gigabyte re-import, and a completion marker alone is not an install oracle — it
+survives storage eviction, so the game boots into missing data with nothing to explain it. If the
+SDK component gains no second consumer, delete it then rather than maintaining a divergent twin.
 
 ## Tests
 
