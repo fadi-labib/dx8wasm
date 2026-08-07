@@ -91,6 +91,9 @@ struct GLBuffer {
   GLenum target;
   std::vector<BYTE> cpu;
   GLuint glbuf = 0;
+  // The usage hint this buffer is respecified with. Starts STATIC and is promoted on the SECOND
+  // unlock -- see Unlock().
+  GLenum hint = GL_STATIC_DRAW;
   explicit GLBuffer(GLenum t, UINT length) : target(t), cpu(length) {}
   HRESULT Lock(UINT off, UINT, BYTE** pp) {
     if (!pp) return D3DERR_INVALIDCALL;
@@ -101,7 +104,29 @@ struct GLBuffer {
     ++g_frameUploads; ++g_frameBufUploads;
     if (!glbuf) glGenBuffers(1, &glbuf);
     glBindBuffer(target, glbuf);
-    glBufferData(target, (GLsizeiptr)cpu.size(), cpu.data(), GL_STATIC_DRAW);
+    // Measured 2026-08-07: this call was 88% of the whole frame -- 60 buffer uploads per frame at
+    // 461 us each on ANGLE/OpenGL (docs RESULTS-2026-08-06-angle-backend.md, AB-06). 461 us is not
+    // transfer cost for a buffer this size; it is a PIPELINE STALL. GL_STATIC_DRAW promises "written
+    // once, drawn many times", so the driver places the buffer in device-local memory and, when the
+    // same buffer is rewritten mid-frame, has to wait for the GPU to finish reading it first.
+    //
+    // A buffer that is unlocked more than once is being rewritten, whatever it was created as, so
+    // promote it after the first upload. The bytes uploaded are IDENTICAL -- this changes only the
+    // hint, so there is no semantic risk, which is why it is the first thing tried. (Honouring the
+    // locked range with glBufferSubData is the other half and is a separate change: it would stop
+    // uploading bytes outside the lock, which is correct per the D3D8 contract but is a real
+    // behaviour change rather than a hint.)
+    // MEASURED, both halves. The hint alone is a 1.5x win on ANGLE/Vulkan (131 -> 77 us per
+    // upload, frame 11.23 -> 7.48 ms) and does nothing on NVIDIA's GL driver (461 -> 462 us).
+    //
+    // Explicit orphaning -- glBufferData(size, NULL, hint) then glBufferSubData -- is the textbook
+    // fix for this stall and was tried here. It made things WORSE: 726 us per upload on GL (from
+    // 462, frame 31.6 -> 48.7 ms) and slightly worse on Vulkan (77 -> 82 us). Two calls plus a
+    // discard signal cost more than the single respecify that ANGLE already turns into whatever it
+    // prefers. It is not in the code; this comment is the record so nobody re-derives it from first
+    // principles and re-lands it.
+    glBufferData(target, (GLsizeiptr)cpu.size(), cpu.data(), hint);
+    hint = GL_DYNAMIC_DRAW;
     return D3D_OK;
   }
   ~GLBuffer() { if (glbuf && platform::gl_context_alive()) glDeleteBuffers(1, &glbuf); }
