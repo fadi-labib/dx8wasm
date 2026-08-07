@@ -48,6 +48,22 @@ using REFIID = const GUID&;
 #define D3DUSAGE_RENDERTARGET   0x00000001L
 #define D3DUSAGE_DEPTHSTENCIL   0x00000002L
 
+// Lock flags. Standard D3D8 values. These went undefined here for the life of the file because
+// nothing in the backend read Lock's flags -- both buffer wrappers discarded the DWORD. Since
+// GLBuffer::Unlock started honouring the locked range they are part of the contract a caller has
+// to be able to express, so they belong in the public header rather than hidden in device.cpp.
+// Guarded: a host that already supplies a real d3d8/d3d9 header (the engine gets these from its
+// vendored dxvk d3d8types.h) must win, and the values agree.
+#ifndef D3DLOCK_NOSYSLOCK
+#define D3DLOCK_NOSYSLOCK       0x00000800L
+#endif
+#ifndef D3DLOCK_NOOVERWRITE
+#define D3DLOCK_NOOVERWRITE     0x00001000L
+#endif
+#ifndef D3DLOCK_DISCARD
+#define D3DLOCK_DISCARD         0x00002000L
+#endif
+
 // --- FVF ---------------------------------------------------------------------
 #define D3DFVF_XYZ      0x0002u
 #define D3DFVF_XYZRHW   0x0004u

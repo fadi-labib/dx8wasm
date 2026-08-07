@@ -123,20 +123,10 @@ double   g_accBufWholeLocks = 0.0, g_accBufDiscard = 0.0, g_accBufNoOverwrite = 
 // Defect counters, NOT per-frame averages -- see the emit site.
 double   g_accBufLockOob = 0.0, g_accBufUnlockUnmatched = 0.0;
 
-// D3D8 lock flags. dx8wasm's own d3d8.h does not define these: the SDK declares only what it
-// implements, and until now nothing in the backend read Lock's flags -- both wrappers discarded
-// the DWORD. Standard D3D8 values; the engine gets the same ones from its vendored dxvk
-// d3d8types.h. Defined here rather than in the public header so the SDK's surface does not grow
-// for the sake of an instrument.
-#ifndef D3DLOCK_NOSYSLOCK
-#define D3DLOCK_NOSYSLOCK   0x00000800L
-#endif
-#ifndef D3DLOCK_NOOVERWRITE
-#define D3DLOCK_NOOVERWRITE 0x00001000L
-#endif
-#ifndef D3DLOCK_DISCARD
-#define D3DLOCK_DISCARD     0x00002000L
-#endif
+// D3DLOCK_* now live in runtime/d3d8/d3d8.h. They were briefly defined here, on the reasoning that
+// the SDK's public surface should not grow for the sake of an instrument -- but once Unlock started
+// acting on the locked range they became part of the contract a caller must be able to express, and
+// runtime/test/buffer_range_smoke.cpp needs them to drive the sub-range path.
 
 // Adds its lifetime to `acc`. Two clock reads per call, so the totals are upper bounds on the
 // real cost -- documented rather than corrected for, since we are looking for a 24 ms gap.

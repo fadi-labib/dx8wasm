@@ -30,6 +30,14 @@ const SMOKES = [
   ['texfmt_smoke', [255, 0, 0, 255]],          // 16-bit A4R4G4B4 texture decode (terrain rainbow-noise fix)
   ['draw_smoke', [51, 204, 102, 255]],   // FVF quad, 0xFF33CC66 -> R=51 G=204 B=102
   ['draw_tex_smoke', [128, 128, 64, 255]], // diffuse(.502,1,1) * texel(1,.502,.251) modulate
+  // The ONLY cover for Unlock's partial-range upload (glBufferSubData). Every other smoke here
+  // locks a whole buffer and so takes the glBufferData respecify branch -- which is why all 24 of
+  // them stayed byte-identical across the change that introduced the sub-range path (GT-09).
+  // Internally checked: a full-buffer write of red, then a sub-range write of green over the right
+  // half only. Left must stay red (bytes outside the lock survived) and right must be green (the
+  // locked range landed at the right offset). A zeroed offset inverts the halves; a lost remainder
+  // kills the red. Reports the [1,0,0,255] pass sentinel, or report_error with which half failed.
+  ['buffer_range_smoke', [1, 0, 0, 255]],
   // Slots (0-based): [0] rsTopTss = RS(3, same D3DRS_FILLMODE token hit 3x to
   // exercise telemetry coalescing) + TOP(1) + TSS(1) = 5; [1] formats = 1;
   // [2] cbCount = 4 (once per distinct token, dedup unaffected by the repeat);
