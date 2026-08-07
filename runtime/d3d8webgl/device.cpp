@@ -69,6 +69,28 @@ void warn_once(const char* what) {   // one line per distinct unimplemented meth
 double   g_frameStateMs = 0.0;
 double   g_frameUploadMs = 0.0;
 uint32_t g_frameUploads = 0;
+
+// --- emission rate -------------------------------------------------------------------------
+// These gauges are emitted ONCE PER SECOND as per-frame averages, not once per frame.
+//
+// Why: the telemetry ring is DX8WASM_TEL_CAPACITY (1024) records drained every
+// DX8WASM_TEL_FLUSH_MS (1000 ms). The engine already emits ~3 records/frame (frame.client,
+// frame.logic, logic.frame). Adding 9 more per frame is 12 x fps per flush -- 720 at 60 fps,
+// which fits, and 1560 at 130 fps, which does NOT. It overflowed the ring and
+// options-roundtrip-test failed on "telemetry ring dropped 24693 record(s)", correctly refusing
+// to trust counts it knew were incomplete.
+//
+// The irony is the useful part: the GL_DYNAMIC_DRAW fix made the game fast enough that the
+// instrumentation measuring it broke the telemetry it reports through. Instrumentation has to
+// budget for the best case, not the case that motivated it.
+//
+// Averaging loses per-frame percentiles. That is an acceptable default: a measurement run that
+// wants p95 can raise DX8WASM_TEL_CAPACITY or shorten the window, while every ordinary run now
+// carries its own frame breakdown for ~9 records/second instead of ~1500.
+double   g_accFrames = 0.0;
+double   g_accDrawMs = 0.0, g_accStateMs = 0.0, g_accTexMs = 0.0, g_accBufMs = 0.0, g_accPresentMs = 0.0;
+double   g_accDraws = 0.0, g_accStateCalls = 0.0, g_accTexUploads = 0.0, g_accBufUploads = 0.0;
+double   g_lastEmitMs = 0.0;
 // Split out, because "uploads are 92% of the frame" is a diagnosis and "which kind" is a fix.
 // tex = UnlockRect -> glTexImage2D; buf = GLBuffer::Unlock -> glBufferData (the whole staging
 // vector, every Unlock, with a STATIC_DRAW hint -- a prime suspect for a per-frame dynamic VB).
@@ -694,16 +716,15 @@ struct Device8 : IDirect3DDevice8 {
     // frame just finished, and the reducer sums counters by key (which would turn a per-frame
     // count into a meaningless running total -- see telemetry.h on why a sampled value fed to a
     // counter produces triangular numbers).
-    dx8wasm_tel_gauge("gl.draws", (double)frameDraws);
-    dx8wasm_tel_gauge("gl.draw_ms", frameDrawMs);
-    dx8wasm_tel_gauge("gl.state_calls", (double)frameStateCalls);
-    dx8wasm_tel_gauge("gl.state_ms", g_frameStateMs);
-    dx8wasm_tel_gauge("gl.upload_ms", g_frameUploadMs);
-    dx8wasm_tel_gauge("gl.uploads", (double)g_frameUploads);
-    dx8wasm_tel_gauge("gl.tex_upload_ms", g_frameTexUploadMs);
-    dx8wasm_tel_gauge("gl.buf_upload_ms", g_frameBufUploadMs);
-    dx8wasm_tel_gauge("gl.tex_uploads", (double)g_frameTexUploads);
-    dx8wasm_tel_gauge("gl.buf_uploads", (double)g_frameBufUploads);
+    g_accFrames      += 1.0;
+    g_accDraws       += (double)frameDraws;
+    g_accDrawMs      += frameDrawMs;
+    g_accStateCalls  += (double)frameStateCalls;
+    g_accStateMs     += g_frameStateMs;
+    g_accTexUploads  += (double)g_frameTexUploads;
+    g_accTexMs       += g_frameTexUploadMs;
+    g_accBufUploads  += (double)g_frameBufUploads;
+    g_accBufMs       += g_frameBufUploadMs;
     g_frameStateMs = 0.0; g_frameUploadMs = 0.0; g_frameUploads = 0;
     g_frameTexUploadMs = 0.0; g_frameBufUploadMs = 0.0;
     g_frameTexUploads = 0; g_frameBufUploads = 0;
@@ -714,7 +735,26 @@ struct Device8 : IDirect3DDevice8 {
     // deferred work at swap time, it lands here and nowhere else.
     const double p0 = emscripten_performance_now();
     platform::present();
-    dx8wasm_tel_gauge("gl.present_ms", emscripten_performance_now() - p0);
+    const double now = emscripten_performance_now();
+    g_accPresentMs += now - p0;
+
+    // Once per second, emit per-frame AVERAGES and reset. 9 records/second, not 9/frame.
+    if (g_lastEmitMs == 0.0) g_lastEmitMs = now;
+    if (now - g_lastEmitMs >= 1000.0 && g_accFrames > 0.0) {
+      const double n = g_accFrames;
+      dx8wasm_tel_gauge("gl.draws",         g_accDraws       / n);
+      dx8wasm_tel_gauge("gl.draw_ms",       g_accDrawMs      / n);
+      dx8wasm_tel_gauge("gl.state_calls",   g_accStateCalls  / n);
+      dx8wasm_tel_gauge("gl.state_ms",      g_accStateMs     / n);
+      dx8wasm_tel_gauge("gl.tex_uploads",   g_accTexUploads  / n);
+      dx8wasm_tel_gauge("gl.tex_upload_ms", g_accTexMs       / n);
+      dx8wasm_tel_gauge("gl.buf_uploads",   g_accBufUploads  / n);
+      dx8wasm_tel_gauge("gl.buf_upload_ms", g_accBufMs       / n);
+      dx8wasm_tel_gauge("gl.present_ms",    g_accPresentMs   / n);
+      g_accFrames = g_accDraws = g_accDrawMs = g_accStateCalls = g_accStateMs = 0.0;
+      g_accTexUploads = g_accTexMs = g_accBufUploads = g_accBufMs = g_accPresentMs = 0.0;
+      g_lastEmitMs = now;
+    }
     return D3D_OK;
   }
   HRESULT BeginScene() override { return D3D_OK; }
