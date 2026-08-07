@@ -99,6 +99,45 @@ double   g_frameBufUploadMs = 0.0;
 uint32_t g_frameTexUploads = 0;
 uint32_t g_frameBufUploads = 0;
 
+// --- Stage A: what does the engine actually LOCK? -------------------------------------------
+// "Uploads are 63% of the frame" is a diagnosis; "and 90% of every upload was not even written
+// to" would be a fix. Nothing has measured the second half, so the pending change to honour the
+// locked range rests on a belief. This measures it before anything acts on it.
+//
+// Two numbers decide it, and BOTH are required:
+//   1. waste_ratio = bytes_uploaded / bytes_locked. Predicted saving is
+//      buf_upload_ms * (1 - 1/waste_ratio); the bar is >= 1.5 ms before a change that can alter
+//      what is drawn is worth making.
+//   2. Whether the cost is per-BYTE or per-CALL at all. AB-06 established the 461 us upload was a
+//      pipeline STALL, and stall cost does not scale with bytes. GL_DYNAMIC_DRAW already attacked
+//      that. If per-upload time stays flat across scenes while bytes_uploaded swings, cutting
+//      bytes buys nothing and the change is dead regardless of how large the waste ratio is.
+//
+// Condition 2 is the one a waste-ratio-only instrument walks straight past -- it would report a
+// large waste, justify the fix, and save nothing. AB-05 is what that costs.
+//
+// waste_ratio is a ratio of SUMS, not a mean of per-upload ratios, so a 200 KB buffer with a 2 KB
+// lock is not averaged out by a dozen small fully-written ones.
+double   g_accBufBytesUploaded = 0.0, g_accBufBytesLocked = 0.0;
+double   g_accBufWholeLocks = 0.0, g_accBufDiscard = 0.0, g_accBufNoOverwrite = 0.0;
+// Defect counters, NOT per-frame averages -- see the emit site.
+double   g_accBufLockOob = 0.0, g_accBufUnlockUnmatched = 0.0;
+
+// D3D8 lock flags. dx8wasm's own d3d8.h does not define these: the SDK declares only what it
+// implements, and until now nothing in the backend read Lock's flags -- both wrappers discarded
+// the DWORD. Standard D3D8 values; the engine gets the same ones from its vendored dxvk
+// d3d8types.h. Defined here rather than in the public header so the SDK's surface does not grow
+// for the sake of an instrument.
+#ifndef D3DLOCK_NOSYSLOCK
+#define D3DLOCK_NOSYSLOCK   0x00000800L
+#endif
+#ifndef D3DLOCK_NOOVERWRITE
+#define D3DLOCK_NOOVERWRITE 0x00001000L
+#endif
+#ifndef D3DLOCK_DISCARD
+#define D3DLOCK_DISCARD     0x00002000L
+#endif
+
 // Adds its lifetime to `acc`. Two clock reads per call, so the totals are upper bounds on the
 // real cost -- documented rather than corrected for, since we are looking for a 24 ms gap.
 struct ScopedMs {
@@ -116,14 +155,67 @@ struct GLBuffer {
   // The usage hint this buffer is respecified with. Starts STATIC and is promoted on the SECOND
   // unlock -- see Unlock().
   GLenum hint = GL_STATIC_DRAW;
+  // The range of the CURRENT lock. Lock and Unlock are separated in time, so Unlock has no way to
+  // know what changed -- which is precisely why it re-uploads the whole staging vector. Recording
+  // it here is what makes both the measurement and any future partial upload possible.
+  // `locked` distinguishes "locked the entire buffer" from "never locked at all".
+  UINT  lock_off = 0, lock_size = 0;
+  DWORD lock_flags = 0;
+  bool  locked = false;
+  // Whether the GL buffer has storage yet. glBufferSubData cannot create it, only patch it.
+  bool  sized = false;
   explicit GLBuffer(GLenum t, UINT length) : target(t), cpu(length) {}
-  HRESULT Lock(UINT off, UINT, BYTE** pp) {
+  HRESULT Lock(UINT off, UINT size, BYTE** pp, DWORD flags) {
     if (!pp) return D3DERR_INVALIDCALL;
+    lock_off = off; lock_size = size; lock_flags = flags; locked = true;
     *pp = cpu.data() + off; return D3D_OK;
   }
   HRESULT Unlock() {
     ScopedMs _u(g_frameUploadMs); ScopedMs _b(g_frameBufUploadMs);
     ++g_frameUploads; ++g_frameBufUploads;
+
+    // --- resolve the range that actually changed ----------------------------------------------
+    // MEASURED 2026-08-07 before this was acted on: waste ratio 28.1x on ANGLE/OpenGL (NVIDIA
+    // RTX 4080 SUPER) -- 671 KB uploaded per Unlock for 24 KB actually locked -- and the cost is
+    // bytes-correlated, not fixed per call (Pearson r = 0.77 over 64 windows; bytes x1.31 ->
+    // time x1.65). Both were required before touching this: a large waste ratio alone would not
+    // have justified it, because AB-06 showed the cost was once a pipeline STALL, and stall cost
+    // does not scale with bytes. See docs/RESULTS-2026-08-07-buffer-upload-ranges.md.
+    UINT up_off = 0, up_size = (UINT)cpu.size();
+    bool upload_all = true;
+    {
+      double locked_bytes = (double)cpu.size();
+      if (!locked) {
+        // Unlock without a matching Lock. Conservative: upload everything, and charge it as a
+        // whole-buffer write so the ratio errs AGAINST the hypothesis rather than flattering it.
+        g_accBufUnlockUnmatched += 1.0;
+      } else if (lock_off > cpu.size()) {
+        // Lock does no bounds check -- `cpu.data() + off` hands out a pointer past the staging
+        // vector for an out-of-range offset. That is a latent defect independent of this work;
+        // count it and upload conservatively rather than deriving a range from a garbage offset.
+        g_accBufLockOob += 1.0;
+        locked_bytes = 0.0;
+      } else {
+        const UINT avail = (UINT)cpu.size() - lock_off;
+        // D3D8: Lock(0, 0, ...) means the ENTIRE buffer, not a zero-byte lock.
+        UINT eff = lock_size ? lock_size : avail;
+        if (eff > avail) { g_accBufLockOob += 1.0; eff = avail; }
+        locked_bytes = (double)eff;
+        if (eff == cpu.size()) {
+          g_accBufWholeLocks += 1.0;
+        } else {
+          // A genuine sub-range. Respecifying the whole buffer is still correct for a whole-buffer
+          // lock and lets the driver orphan, so only sub-ranges take the glBufferSubData path.
+          up_off = lock_off; up_size = eff; upload_all = false;
+        }
+      }
+      if (locked && (lock_flags & D3DLOCK_DISCARD))     g_accBufDiscard     += 1.0;
+      if (locked && (lock_flags & D3DLOCK_NOOVERWRITE)) g_accBufNoOverwrite += 1.0;
+      g_accBufBytesLocked += locked_bytes;
+      locked = false;   // cleared so a stale range cannot be counted twice
+    }
+    // -------------------------------------------------------------------------------------------
+
     if (!glbuf) glGenBuffers(1, &glbuf);
     glBindBuffer(target, glbuf);
     // Measured 2026-08-07: this call was 88% of the whole frame -- 60 buffer uploads per frame at
@@ -146,8 +238,24 @@ struct GLBuffer {
     // 462, frame 31.6 -> 48.7 ms) and slightly worse on Vulkan (77 -> 82 us). Two calls plus a
     // discard signal cost more than the single respecify that ANGLE already turns into whatever it
     // prefers. It is not in the code; this comment is the record so nobody re-derives it from first
-    // principles and re-lands it.
-    glBufferData(target, (GLsizeiptr)cpu.size(), cpu.data(), hint);
+    // principles and re-lands it. Note this is NOT the same as the sub-range upload below: that
+    // one sends FEWER bytes, where orphaning sent the same bytes plus a discard.
+    //
+    // THE FIRST UPLOAD IS ALWAYS WHOLE-BUFFER, and that is a correctness requirement, not an
+    // optimisation. glBufferSubData can only patch storage that already exists, and until the
+    // first glBufferData the GL buffer has no size at all. Uploading everything once also makes
+    // the GL buffer an exact copy of the staging vector, so every later divergence is confined to
+    // bytes the app wrote inside a lock -- which is what makes patching only the locked range
+    // safe. Without it, bytes never covered by any lock (a partially-filled buffer's tail) would
+    // be undefined on the GPU instead of the zeros the staging vector holds.
+    if (upload_all || !sized) {
+      glBufferData(target, (GLsizeiptr)cpu.size(), cpu.data(), hint);
+      sized = true;
+      g_accBufBytesUploaded += (double)cpu.size();
+    } else {
+      glBufferSubData(target, (GLintptr)up_off, (GLsizeiptr)up_size, cpu.data() + up_off);
+      g_accBufBytesUploaded += (double)up_size;
+    }
     hint = GL_DYNAMIC_DRAW;
     return D3D_OK;
   }
@@ -173,7 +281,7 @@ struct VertexBuffer8 : IDirect3DVertexBuffer8 {
   ULONG AddRef() override { return ++refs; }
   ULONG Release() override { ULONG r = --refs; if (!r) delete this; return r; }
   D3D_RESOURCE_STUBS(D3DRTYPE_VERTEXBUFFER)
-  HRESULT Lock(UINT o, UINT s, BYTE** pp, DWORD) override { return b.Lock(o, s, pp); }
+  HRESULT Lock(UINT o, UINT s, BYTE** pp, DWORD f) override { return b.Lock(o, s, pp, f); }
   HRESULT Unlock() override { return b.Unlock(); }
   HRESULT GetDesc(D3DVERTEXBUFFER_DESC* d) override {
     if (d) { std::memset(d, 0, sizeof *d); d->Type = D3DRTYPE_VERTEXBUFFER; d->Pool = D3DPOOL_MANAGED; d->Size = length; d->FVF = fvf; }
@@ -187,7 +295,7 @@ struct IndexBuffer8 : IDirect3DIndexBuffer8 {
   ULONG AddRef() override { return ++refs; }
   ULONG Release() override { ULONG r = --refs; if (!r) delete this; return r; }
   D3D_RESOURCE_STUBS(D3DRTYPE_INDEXBUFFER)
-  HRESULT Lock(UINT o, UINT s, BYTE** pp, DWORD) override { return b.Lock(o, s, pp); }
+  HRESULT Lock(UINT o, UINT s, BYTE** pp, DWORD f) override { return b.Lock(o, s, pp, f); }
   HRESULT Unlock() override { return b.Unlock(); }
   HRESULT GetDesc(D3DINDEXBUFFER_DESC* d) override {
     if (d) { std::memset(d, 0, sizeof *d); d->Type = D3DRTYPE_INDEXBUFFER; d->Pool = D3DPOOL_MANAGED; d->Size = length; d->Format = fmt; }
@@ -751,8 +859,31 @@ struct Device8 : IDirect3DDevice8 {
       dx8wasm_tel_gauge("gl.buf_uploads",   g_accBufUploads  / n);
       dx8wasm_tel_gauge("gl.buf_upload_ms", g_accBufMs       / n);
       dx8wasm_tel_gauge("gl.present_ms",    g_accPresentMs   / n);
+      // Stage A. Ring budget, because this is a documented failure mode: the engine emits ~3
+      // records/frame (390/s at 130 fps), the gauges above are 9/s, these are 8/s -- ~407/s
+      // against a DX8WASM_TEL_CAPACITY of 1024. Fits. The comment at the top of this file is the
+      // record of the run where that arithmetic was NOT done.
+      dx8wasm_tel_gauge("gl.buf_bytes_uploaded", g_accBufBytesUploaded / n);
+      dx8wasm_tel_gauge("gl.buf_bytes_locked",   g_accBufBytesLocked   / n);
+      // buf_bytes_uploaded counts what is ACTUALLY sent, so once Unlock honours the locked range
+      // this ratio collapses toward 1.0 and STAYS there. That makes it a permanent regression
+      // detector rather than a one-off diagnosis: anything that goes back to respecifying whole
+      // buffers shows up here as the ratio climbing again, in every ordinary capture.
+      // Ratio of sums, so one 200 KB buffer with a 2 KB lock is not averaged away by a dozen
+      // small fully-written ones. 0.0 means "nothing was locked this window", not "no waste".
+      dx8wasm_tel_gauge("gl.buf_waste_ratio",
+                        g_accBufBytesLocked > 0.0 ? g_accBufBytesUploaded / g_accBufBytesLocked : 0.0);
+      dx8wasm_tel_gauge("gl.buf_whole_locks",    g_accBufWholeLocks    / n);
+      dx8wasm_tel_gauge("gl.buf_discard",        g_accBufDiscard       / n);
+      dx8wasm_tel_gauge("gl.buf_nooverwrite",    g_accBufNoOverwrite   / n);
+      // NOT divided by n. These are defects, and a defect rate of 0.02/frame reads as zero;
+      // a raw count of 1 in a window is unmistakable.
+      dx8wasm_tel_gauge("gl.buf_lock_oob",         g_accBufLockOob);
+      dx8wasm_tel_gauge("gl.buf_unlock_unmatched", g_accBufUnlockUnmatched);
       g_accFrames = g_accDraws = g_accDrawMs = g_accStateCalls = g_accStateMs = 0.0;
       g_accTexUploads = g_accTexMs = g_accBufUploads = g_accBufMs = g_accPresentMs = 0.0;
+      g_accBufBytesUploaded = g_accBufBytesLocked = g_accBufWholeLocks = 0.0;
+      g_accBufDiscard = g_accBufNoOverwrite = g_accBufLockOob = g_accBufUnlockUnmatched = 0.0;
       g_lastEmitMs = now;
     }
     return D3D_OK;
