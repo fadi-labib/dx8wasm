@@ -129,6 +129,15 @@ target_link_libraries(buffer_range_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(buffer_range_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(buffer_range_smoke PROPERTIES SUFFIX ".js")
 
+# The gauges over that path: gl.buf_waste_ratio and the defect counters, asserted from a real
+# emission drained in-process. Spans two once-per-second windows, so it costs ~2.2 s (GT-11:
+# "validated" is not "gated" -- this is the gate).
+add_executable(buffer_gauge_smoke runtime/test/buffer_gauge_smoke.cpp)
+target_include_directories(buffer_gauge_smoke PRIVATE runtime runtime/d3d8 runtime/include)
+target_link_libraries(buffer_gauge_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(buffer_gauge_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(buffer_gauge_smoke PROPERTIES SUFFIX ".js")
+
 add_executable(draw_tex_smoke runtime/test/draw_tex_smoke.cpp)
 target_include_directories(draw_tex_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(draw_tex_smoke PRIVATE dx8_d3d8webgl)

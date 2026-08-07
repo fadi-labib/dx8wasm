@@ -38,6 +38,14 @@ const SMOKES = [
   // locked range landed at the right offset). A zeroed offset inverts the halves; a lost remainder
   // kills the red. Reports the [1,0,0,255] pass sentinel, or report_error with which half failed.
   ['buffer_range_smoke', [1, 0, 0, 255]],
+  // The gauges OVER that path (GT-11: "validated" is not "gated"). Asserts a real once-per-
+  // second emission drained in-process: a correct whole+sub-range window must read
+  // gl.buf_waste_ratio exactly 1.0, and a fresh buffer whose FIRST lock is a sub-range must
+  // read exactly 2.0 -- the first upload is whole-buffer by correctness (AB-13), so the
+  // "gauge can report waste" half can never rot into vacuity. Spends ~2.2 s busy-waiting
+  // across two emission windows; that is the price of testing the emission path rather than
+  // a hook that would duplicate its math. Internally checked, [1,0,0,255] pass sentinel.
+  ['buffer_gauge_smoke', [1, 0, 0, 255]],
   // Slots (0-based): [0] rsTopTss = RS(3, same D3DRS_FILLMODE token hit 3x to
   // exercise telemetry coalescing) + TOP(1) + TSS(1) = 5; [1] formats = 1;
   // [2] cbCount = 4 (once per distinct token, dedup unaffected by the repeat);
