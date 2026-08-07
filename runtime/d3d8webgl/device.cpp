@@ -128,6 +128,143 @@ double   g_accBufLockOob = 0.0, g_accBufUnlockUnmatched = 0.0;
 // acting on the locked range they became part of the contract a caller must be able to express, and
 // runtime/test/buffer_range_smoke.cpp needs them to drive the sub-range path.
 
+// --- GPU frame time: what is the 7.56 ms OUTSIDE the engine? --------------------------------
+// Even uncapped, client + logic + present is 3.81 ms of an 11.36 ms frame (AB-24); the other
+// two thirds is not engine code. Every gl.* gauge above times the API *call*, not the GPU work
+// it queues, so GPU execution necessarily lands in that gap -- along with canvas compositing
+// and rAF scheduling, and nothing has ever separated the three.
+//
+// EXT_disjoint_timer_query_webgl2 brackets the frame's whole GL command stream: begin right
+// after present N, end right after present N+1, so every command of frame N+1 including its
+// swap is inside. gl.gpu_ms is therefore GPU execution of OUR commands only -- compositing is
+// the browser drawing the canvas into the page and is deliberately outside the bracket. That
+// is exactly the split the number exists to make. The extension was probed available AND
+// functional on this rig (ANGLE/GL and ANGLE/Vulkan, RTX 4080: a 200-draw workload returned
+// 52-56 us, result available within 10 ms) BEFORE this was designed around it, the way
+// glMapBufferRange was checked (AB-18). NOTE the emscripten trap found in the same probe: the
+// gl*EXT query entry points (glGenQueriesEXT et al.) call createQueryEXT()/beginQueryEXT(),
+// which exist only on the WebGL1 extension object -- on a WebGL2 context the CORE ES3 query
+// API must be used with the EXT enum, and only the 64-bit result read goes through the EXT
+// entry point (whose WebGL2 branch correctly calls getQueryParameter).
+//
+// Decision rule, fixed BEFORE the first capture (IM-03), against the uncapped menu frame
+// (11.36 ms period, 7.56 ms unexplained):
+//   gpu_ms >= 4.5 ms (>=60% of the gap) -> the port is GPU-bound uncapped; the question closes
+//                                          as "GPU execution", and any future uncapped-fps work
+//                                          targets GPU load, not engine CPU.
+//   gpu_ms <= 1.5 ms (<=20% of the gap) -> the gap is compositing/scheduling, unaddressable
+//                                          from inside the engine; the question closes as
+//                                          "browser overhead" and strengthens the IM-16
+//                                          demotion of client-side scene work.
+//   in between                          -> report the split and STOP; neither branch justifies
+//                                          further work at 60 Hz.
+// Every branch CLOSES the item (IM-02): what this instrument can kill is any future plan to
+// buy uncapped fps from engine CPU work, and equally any untested "it's the browser" claim.
+//
+// Caveat carried from 2026-08-06: the 4080 idled at P8/210 MHz mid-skirmish when the CPU was
+// the bottleneck. The timer measures at whatever clock the GPU actually ran, so a downclocked
+// GPU reports honestly larger times -- that is the reality being measured, not an error term.
+// Clock changes can surface as GPU_DISJOINT events; those samples are dropped and counted.
+//
+// Validation counter (IM-05): gl.gpu_frames is the harvested-sample denominator and reads
+// EXACTLY ZERO if any of the plumbing is broken, so a capture where gpu_ms looks plausible but
+// gpu_frames is 0 or tiny is the instrument failing, not the GPU being fast.
+#ifndef GL_TIME_ELAPSED_EXT
+#define GL_TIME_ELAPSED_EXT 0x88BF
+#endif
+#ifndef GL_GPU_DISJOINT_EXT
+#define GL_GPU_DISJOINT_EXT 0x8FBB
+#endif
+// Provided by emscripten's libwebgl; the WebGL2 branch reads via getQueryParameter and writes
+// an i53 into the out pointer. Declared here because GLES3/gl3.h carries neither the EXT enums
+// nor this entry point, and including GLES2/gl2ext.h alongside gl3.h buys those two lines at
+// the cost of a header-compatibility question this file does not need to answer.
+extern "C" void glGetQueryObjectui64vEXT(GLuint id, GLenum pname, GLuint64* params);
+
+constexpr int GPU_TQ_RING = 8;   // results arrive ~1 frame later; 8 absorbs a slow harvest
+GLuint  g_gpuTq[GPU_TQ_RING] = {};
+bool    g_gpuTqInFlight[GPU_TQ_RING] = {};
+int     g_gpuTqHead = 0;         // next slot to begin a query in
+int     g_gpuTqTail = 0;         // oldest in-flight slot, harvested in order
+int     g_gpuTqActive = -1;      // slot whose query is currently open, -1 if none
+int     g_gpuTqState = 0;        // 0 unprobed, 1 supported, -1 unsupported (SwiftShader)
+int     g_gpuTqTainted = 0;      // in-flight results to DROP after a disjoint event
+double  g_accGpuMs = 0.0;        // sum of harvested GPU-elapsed time, ms
+double  g_accGpuFrames = 0.0;    // harvested samples -- the denominator (IM-12)
+double  g_accGpuDisjoint = 0.0;  // defect-style raw counts, not divided by n (see emit site)
+double  g_accGpuUnmeasured = 0.0;
+
+// Called once per Present, AFTER platform::present(), so the open query brackets everything
+// the next frame issues. Cost when supported: one begin/end, one getParameter, one
+// availability poll per frame -- noise against the 7.56 ms being attributed.
+static void gpu_frame_tick() {
+  if (g_gpuTqState < 0) return;
+  if (g_gpuTqState == 0) {
+    // Probe on the live context rather than trusting the availability check done on this rig:
+    // SwiftShader runs the same binary, and an unsupported target must disable this path
+    // permanently instead of raising GL errors every frame. Drain stale errors first so the
+    // probe reads its own verdict, not a leftover from boot.
+    while (glGetError() != GL_NO_ERROR) {}
+    GLuint probe = 0;
+    glGenQueries(1, &probe);
+    glBeginQuery(GL_TIME_ELAPSED_EXT, probe);
+    if (glGetError() != GL_NO_ERROR) {
+      glDeleteQueries(1, &probe);
+      g_gpuTqState = -1;
+      return;
+    }
+    glEndQuery(GL_TIME_ELAPSED_EXT);
+    glDeleteQueries(1, &probe);
+    glGenQueries(GPU_TQ_RING, g_gpuTq);
+    g_gpuTqState = 1;
+  }
+
+  // Close the bracket around the frame just presented.
+  if (g_gpuTqActive >= 0) {
+    glEndQuery(GL_TIME_ELAPSED_EXT);
+    g_gpuTqInFlight[g_gpuTqActive] = true;
+    g_gpuTqActive = -1;
+  }
+
+  // Reading GPU_DISJOINT_EXT also RESETS it, so once per frame is the right cadence. A
+  // disjoint event (clock change, preemption) invalidates every result not yet harvested.
+  GLint disjoint = 0;
+  glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint);
+  if (disjoint) {
+    g_accGpuDisjoint += 1.0;
+    g_gpuTqTainted = 0;
+    for (int i = 0; i < GPU_TQ_RING; ++i) g_gpuTqTainted += g_gpuTqInFlight[i] ? 1 : 0;
+  }
+
+  // Harvest every result that is ready, oldest first. Never blocks: an unavailable result
+  // stays in flight and is retried next frame.
+  while (g_gpuTqInFlight[g_gpuTqTail]) {
+    GLuint avail = 0;
+    glGetQueryObjectuiv(g_gpuTq[g_gpuTqTail], GL_QUERY_RESULT_AVAILABLE, &avail);
+    if (!avail) break;
+    GLuint64 ns = 0;
+    glGetQueryObjectui64vEXT(g_gpuTq[g_gpuTqTail], GL_QUERY_RESULT, &ns);
+    g_gpuTqInFlight[g_gpuTqTail] = false;
+    g_gpuTqTail = (g_gpuTqTail + 1) % GPU_TQ_RING;
+    if (g_gpuTqTainted > 0) {
+      --g_gpuTqTainted;   // measured across a disjoint event; the value is garbage
+    } else {
+      g_accGpuMs     += (double)ns / 1e6;
+      g_accGpuFrames += 1.0;
+    }
+  }
+
+  // Open the bracket for the coming frame, unless the ring is saturated -- then skip the
+  // frame and say so, rather than stalling the engine thread to wait for a slot.
+  if (!g_gpuTqInFlight[g_gpuTqHead]) {
+    glBeginQuery(GL_TIME_ELAPSED_EXT, g_gpuTq[g_gpuTqHead]);
+    g_gpuTqActive = g_gpuTqHead;
+    g_gpuTqHead = (g_gpuTqHead + 1) % GPU_TQ_RING;
+  } else {
+    g_accGpuUnmeasured += 1.0;
+  }
+}
+
 // Adds its lifetime to `acc`. Two clock reads per call, so the totals are upper bounds on the
 // real cost -- documented rather than corrected for, since we are looking for a 24 ms gap.
 struct ScopedMs {
@@ -853,6 +990,10 @@ struct Device8 : IDirect3DDevice8 {
     const double now = emscripten_performance_now();
     g_accPresentMs += now - p0;
 
+    // After present, so the query it opens brackets the whole of the NEXT frame's GL stream
+    // and the one it closes covered this frame's, swap included.
+    gpu_frame_tick();
+
     // Once per second, emit per-frame AVERAGES and reset. 9 records/second, not 9/frame.
     if (g_lastEmitMs == 0.0) g_lastEmitMs = now;
     if (now - g_lastEmitMs >= 1000.0 && g_accFrames > 0.0) {
@@ -887,10 +1028,26 @@ struct Device8 : IDirect3DDevice8 {
       // a raw count of 1 in a window is unmistakable.
       dx8wasm_tel_gauge("gl.buf_lock_oob",         g_accBufLockOob);
       dx8wasm_tel_gauge("gl.buf_unlock_unmatched", g_accBufUnlockUnmatched);
+      // GPU frame time (see gpu_frame_tick above). gpu_ms divides by ITS OWN denominator, not
+      // n: harvested samples can lag frames by the ring depth, and dividing a sum of K samples
+      // by n frames would understate the GPU time by exactly the lag (IM-14's cousin -- never
+      // mix denominators). gpu_frames is emitted so the divisor is checkable (IM-12); it reads
+      // 0 if the query plumbing is broken (IM-05). Emitted only when the extension probed
+      // supported, so absence in a capture means "unsupported context", not "zero GPU cost".
+      // disjoint/unmeasured are defect-style raw counts, like the two lines above.
+      // Ring budget (IM-07): +4 records/s on top of the ~407/s counted above -> ~411/s
+      // against DX8WASM_TEL_CAPACITY 1024. Still fits at 130 fps.
+      if (g_gpuTqState > 0) {
+        dx8wasm_tel_gauge("gl.gpu_ms",         g_accGpuFrames > 0.0 ? g_accGpuMs / g_accGpuFrames : 0.0);
+        dx8wasm_tel_gauge("gl.gpu_frames",     g_accGpuFrames);
+        dx8wasm_tel_gauge("gl.gpu_disjoint",   g_accGpuDisjoint);
+        dx8wasm_tel_gauge("gl.gpu_unmeasured", g_accGpuUnmeasured);
+      }
       g_accFrames = g_accDraws = g_accDrawMs = g_accStateCalls = g_accStateMs = 0.0;
       g_accTexUploads = g_accTexMs = g_accBufUploads = g_accBufMs = g_accPresentMs = 0.0;
       g_accBufBytesUploaded = g_accBufBytesLocked = g_accBufWholeLocks = 0.0;
       g_accBufDiscard = g_accBufNoOverwrite = g_accBufLockOob = g_accBufUnlockUnmatched = 0.0;
+      g_accGpuMs = g_accGpuFrames = g_accGpuDisjoint = g_accGpuUnmeasured = 0.0;
       g_lastEmitMs = now;
     }
     return D3D_OK;
