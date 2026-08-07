@@ -231,6 +231,23 @@ struct GLBuffer {
     // principles and re-lands it. Note this is NOT the same as the sub-range upload below: that
     // one sends FEWER bytes, where orphaning sent the same bytes plus a discard.
     //
+    // ORPHANING IS NOW ALSO UNSAFE HERE, which is a stronger statement than "it was slower".
+    // Orphaning discards the buffer's whole contents. The sub-range path below depends on the
+    // bytes OUTSIDE the lock still being on the GPU from an earlier upload -- orphaning throws away
+    // exactly what it relies on. It is only legal on D3DLOCK_DISCARD, where the app has promised it
+    // no longer needs those bytes, and DISCARD is ~11% of uploads here (measured: ~6 of ~55 per
+    // frame; the other ~49 are NOOVERWRITE). So re-landing orphaning unconditionally would corrupt
+    // geometry, not merely cost time.
+    //
+    // And the remedy that WOULD address the remaining cost is unavailable. Patching in place makes
+    // the driver conservatively synchronise -- measured as per-draw-call cost rising 2.2 -> 4.0 us
+    // on GL and 2.4 -> 4.2 us on Vulkan, which is where about a third of the upload saving
+    // reappeared (AB-14). D3DLOCK_NOOVERWRITE is precisely the app promising that sync is
+    // unnecessary, but GL has no way to pass that promise on: WebGL2 has no buffer mapping, and
+    // emscripten's glMapBufferRange REJECTS GL_MAP_UNSYNCHRONIZED_BIT outright and emulates the
+    // mapping with malloc + copy (emsdk src/lib/libwebgl.js). There is no unsynchronised write
+    // path in the browser to reach for.
+    //
     // THE FIRST UPLOAD IS ALWAYS WHOLE-BUFFER, and that is a correctness requirement, not an
     // optimisation. glBufferSubData can only patch storage that already exists, and until the
     // first glBufferData the GL buffer has no size at all. Uploading everything once also makes
