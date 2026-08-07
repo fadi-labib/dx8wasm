@@ -19,6 +19,25 @@ echo "  emcc $have (pinned)"
 echo "== packer selftest =="
 python3 asset-tools/pack.py --selftest
 
+echo "== harness dependencies =="
+# web-runtime/node_modules/ is gitignored and this script has no install step, so on a fresh checkout
+# the suite below dies with ERR_MODULE_NOT_FOUND naming an innocent test file -- four gates in.
+# `npm test` runs gaxd.test.mjs first and that one imports only node built-ins plus ../gaxd.js, so it
+# passes with nothing installed; the failure surfaces at loader.browser.test.mjs, which is not the
+# file that is wrong. Fail here, with the command, rather than there with a stack trace.
+#
+# Ported from the integration repo (generals-dx8wasm/scripts/ci.sh), which grew this check hours
+# before this repo hit the identical failure. The browsers are a SECOND install: package.json floats
+# ^1.48.0 and the lockfile pins a specific build, which wants a Chromium an older
+# ~/.cache/ms-playwright will not have. Playwright's own launch error is explicit about that half,
+# so this only guards the package half.
+if [ ! -d web-runtime/node_modules/playwright ]; then
+  echo "  FAIL: harness dependencies not installed. Run:"
+  echo "    (cd web-runtime && npm ci && npx playwright install chromium)"
+  exit 1
+fi
+echo "  ok"
+
 echo "== web-runtime suite (gaxd, loader, onboard) =="
 ( cd web-runtime && npm test )
 
