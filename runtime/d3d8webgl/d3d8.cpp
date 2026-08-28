@@ -66,6 +66,12 @@ inline UINT collect_modes(AdapterMode out[ADAPTER_MODE_COUNT]) {
   out[2] = { (UINT)(boxW43 & ~1),  (UINT)(boxH43 & ~1) };  // 4:3 box (viewport taller than 4:3)
   out[3] = { (UINT)(boxW169 & ~1), (UINT)(vpH & ~1)    };  // 16:9 box (viewport wider than 16:9)
   out[4] = { 1024, 768 };                            // legacy fallback / the engine's floor
+  static bool logged = false;
+  if (!logged) {   // once: what an engine's Find_Color_Mode can match against, for the "black scene" class of bug
+    logged = true;
+    std::fprintf(stderr, "[dx8wasm] adapter modes: canvas %ux%u, viewport %ux%u, 4:3 %ux%u, 16:9 %ux%u, floor %ux%u\n",
+                 out[0].w, out[0].h, out[1].w, out[1].h, out[2].w, out[2].h, out[3].w, out[3].h, out[4].w, out[4].h);
+  }
   return ADAPTER_MODE_COUNT;
 }
 
