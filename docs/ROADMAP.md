@@ -162,3 +162,11 @@ The seam a real game plugs into, all via the public surface (see [`docs/INTEGRAT
   [`RESULTS-2026-08-01-close-the-docs-items.md`](RESULTS-2026-08-01-close-the-docs-items.md)
   (`CDI-1`..`CDI-29` — documentation drift, plans written without compiling them, coverage
   instrumentation as a work list, failure modes the suite cannot see, parallel worktree execution).
+- **Rendering lessons from the 2026-08-28 Generals integration** (`AB-33..35`) live in the
+  integration repo's [`docs/LESSONS-2026-08-28.md`](../../generals-dx8wasm/docs/LESSONS-2026-08-28.md),
+  since they were found against a real game: the D3D pixel-centre convention and its 7/16-px shader
+  translation (`runtime/graphics-ff/ff_shader.cpp`, pinned by `rhw_pixel_center_smoke`,
+  `rhw_texel_exact_smoke`, `xyz_texel_exact_smoke`; documented in `docs/SDK_REFERENCE.md` and the
+  `CONFORMANCE.md` matrix), and why an emulated D3D8 on the web must report any resolution as a valid
+  32-bit mode (`runtime/d3d8webgl/d3d8.cpp` `collect_modes`) rather than mirror desktop mode
+  enumeration.
