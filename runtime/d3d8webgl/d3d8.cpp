@@ -19,22 +19,33 @@ namespace {
 // Get_Valid_Texture_Format strips texture alpha (A8R8G8B8 -> R5G6B5 / A4R4G4B4). That
 // turned every transparent sprite (mouse cursor, smoke/particle billboards, light
 // beams) into an opaque square. The reference d3d8webgl port enumerates the native
-// canvas mode for exactly this reason. We offer the native canvas size, the 4:3
-// pillarbox internal res the engine derives from it (see SDL3Main.cpp -xres/-yres),
-// and 1024x768 as a legacy fallback — so whichever the engine requests, it matches.
+// canvas mode for exactly this reason.
+//
+// What the engine requests is the viewport CLAMPED to its 4:3..16:9 aspect band (GeneralsX
+// W3DDisplay.cpp clampWidthToAspectBand, applied at boot since 2026-08-28 as well as on every
+// resize), with a 1024x768 floor. So the list must contain, for the viewport's height, the
+// native size AND both band edges -- the 4:3 box (tall viewports) and the 16:9 box (ultrawide
+// viewports) -- plus the legacy 1024x768. The 16:9 box was missing: on a 21:9 window the engine
+// asked for 1920x1080, found no mode, fell back to 16-bit, and the player saw black squares
+// around every transparent icon, a black 3D scene behind the menu and a misplaced HUD
+// (generals.fadilabib.com, 2026-08-28). Any viewport aspect inside the band is the native
+// entry; either side of it is one of the boxes; below the floor is 1024x768.
 struct AdapterMode { UINT w, h; };
-inline UINT collect_modes(AdapterMode out[3]) {
+enum { ADAPTER_MODE_COUNT = 4 };
+inline UINT collect_modes(AdapterMode out[ADAPTER_MODE_COUNT]) {
   int vpW = MAIN_THREAD_EM_ASM_INT({ return (window.innerWidth | 0) || 1024; });
   int vpH = MAIN_THREAD_EM_ASM_INT({ return (window.innerHeight | 0) || 768; });
   if (vpW < 320) vpW = 1024;
   if (vpH < 240) vpH = 768;
-  int winW = vpW, winH = vpH;                       // largest 4:3 box that fits (matches SDL3Main)
-  if (winW * 3 > winH * 4) winW = (winH * 4) / 3;
-  else if (winW * 3 < winH * 4) winH = (winW * 3) / 4;
-  out[0] = { (UINT)(vpW & ~1),  (UINT)(vpH & ~1)  };  // native canvas
-  out[1] = { (UINT)(winW & ~1), (UINT)(winH & ~1) };  // 4:3 pillarbox internal res
-  out[2] = { 1024, 768 };                            // legacy fallback
-  return 3;
+  int boxW43 = vpW, boxH43 = vpH;                   // largest 4:3 box that fits (matches SDL3Main's old default)
+  if (boxW43 * 3 > boxH43 * 4) boxW43 = (boxH43 * 4) / 3;
+  else if (boxW43 * 3 < boxH43 * 4) boxH43 = (boxW43 * 3) / 4;
+  const int boxW169 = (vpH * 16) / 9;               // the band's wide edge for this height
+  out[0] = { (UINT)(vpW & ~1),    (UINT)(vpH & ~1)   };  // native canvas (aspect inside the band)
+  out[1] = { (UINT)(boxW43 & ~1), (UINT)(boxH43 & ~1) };  // 4:3 box (viewport taller than 4:3)
+  out[2] = { (UINT)(boxW169 & ~1), (UINT)(vpH & ~1)   };  // 16:9 box (viewport wider than 16:9)
+  out[3] = { 1024, 768 };                            // legacy fallback / the engine's floor
+  return ADAPTER_MODE_COUNT;
 }
 
 struct D3D8 : IDirect3D8 {
@@ -58,16 +69,16 @@ struct D3D8 : IDirect3D8 {
     id->DriverVersion = 1;
     return D3D_OK;
   }
-  UINT GetAdapterModeCount(UINT) override { AdapterMode md[3]; return collect_modes(md); }
+  UINT GetAdapterModeCount(UINT) override { AdapterMode md[ADAPTER_MODE_COUNT]; return collect_modes(md); }
   HRESULT EnumAdapterModes(UINT, UINT i, D3DDISPLAYMODE* m) override {
-    AdapterMode md[3]; UINT n = collect_modes(md);
+    AdapterMode md[ADAPTER_MODE_COUNT]; UINT n = collect_modes(md);
     if (!m || i >= n) return D3DERR_INVALIDCALL;
     m->Width = md[i].w; m->Height = md[i].h; m->RefreshRate = 60; m->Format = D3DFMT_X8R8G8B8;
     return D3D_OK;
   }
   HRESULT GetAdapterDisplayMode(UINT, D3DDISPLAYMODE* m) override {
     if (!m) return D3DERR_INVALIDCALL;
-    AdapterMode md[3]; collect_modes(md);
+    AdapterMode md[ADAPTER_MODE_COUNT]; collect_modes(md);
     m->Width = md[0].w; m->Height = md[0].h; m->RefreshRate = 60; m->Format = D3DFMT_X8R8G8B8;   // native canvas
     return D3D_OK;
   }
