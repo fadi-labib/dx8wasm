@@ -55,7 +55,7 @@ struct Program {
   GLint uGlobalAmbient = -1, uMatDiffuse = -1, uMatAmbient = -1, uMatEmissive = -1;
   // Linear fog uniforms (valid only on fog programs).
   GLint uFogColor = -1, uFogStart = -1, uFogEnd = -1;
-  GLint uViewport = -1;   // pre-transformed (XYZRHW): screen -> clip mapping
+  GLint uViewport = -1;   // render-target size in pixels: RHW screen->clip mapping AND the D3D half-pixel translation on every path
   // Bind-time hints recovered from the key.
   int stagesUsed = 0;     // number of enabled stages the fragment combiner chains (0..2)
 };

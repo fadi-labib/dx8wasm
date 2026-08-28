@@ -113,8 +113,8 @@ Program build(const Key& k) {
   if (anyTex && texIn > 0) vs += "layout(location=2) in vec2 aUV0;\n";
   if (lit)                 vs += "layout(location=3) in vec3 aNormal;\n";
   if (anyTex && texIn > 1) vs += "layout(location=4) in vec2 aUV1;\n";
-  if (rhw) vs += "uniform vec2 uViewport;\n";
-  else     vs += "uniform mat4 uWorld, uView, uProj;\n";
+  vs += "uniform vec2 uViewport;\n";                 // every path: the D3D half-pixel translation needs the target size
+  if (!rhw) vs += "uniform mat4 uWorld, uView, uProj;\n";
   if (useMat[0]) vs += "uniform mat4 uTexMat0;\n";
   if (useMat[1]) vs += "uniform mat4 uTexMat1;\n";
   if (lit) vs +=
@@ -143,6 +143,27 @@ Program build(const Key& k) {
     "  gl_Position = vec4(aPos.x/uViewport.x*2.0 - 1.0, 1.0 - aPos.y/uViewport.y*2.0, aPos.z*2.0 - 1.0, 1.0);\n";
   else vs +=
     "  gl_Position = uProj*uView*uWorld*vec4(aPos,1.0);\n";
+  // The D3D8/9 pixel-centre convention, for EVERY path. In D3D a pixel's centre sits at integer
+  // screen coordinates (pixel i spans i-0.5..i+0.5; NDC -1 lands on pixel 0's CENTRE); in GL it
+  // sits at i+0.5 (NDC -1 is pixel 0's left EDGE). Translating clip space by half a pixel —
+  // +1/W in x, -1/H in y, scaled by w so it survives the perspective divide — makes GL rasterise
+  // and interpolate exactly where D3D would. It matters because D3D-era 2D code pre-offsets its
+  // geometry by -0.5 px to put texel centres on pixel centres (Generals' Render2DClass:
+  // `bais_add(-0.5f, -0.5f)`, `WW3D::Set_Screen_UV_Bias(TRUE)` "this makes text look good"), and
+  // Render2D submits that geometry as plain XYZ clip-space vertices with identity matrices — NOT
+  // as XYZRHW. Without this translation every UI sample sat on a texel BOUNDARY: linear filtering
+  // blended each tiled button piece's edge with the transparent atlas texel next to it, a
+  // half-alpha hairline at every piece edge (period = one piece, generals.fadilabib.com
+  // 2026-08-28). wined3d applies the same translation for D3D9 -- by 63/128 px rather than
+  // exactly 1/2, because an exact half puts sample points precisely ON the edges of geometry
+  // that D3D apps align to pixel centres (full-screen quads, 1:1 blits), where GL's tie-break is
+  // implementation-defined (D3D guarantees top-left). Measured here (point_light_smoke, a
+  // centre-aligned quad read at its edge row): the rasteriser snaps to 1/16 px and a tie on the
+  // y-max edge is EXCLUSIVE, so 63/128 (margin 1/128) and 15/32 (margin 1/32) both lose the row;
+  // 7/16 (margin 1/16) keeps it on NVIDIA GL and SwiftShader alike. 1/16 px short of half is
+  // invisible (a ~6% texel blend at worst). Pinned by rhw_pixel_center_smoke (coverage),
+  // rhw_texel_exact_smoke and xyz_texel_exact_smoke (sampling).
+  vs += "  gl_Position.xy += vec2(0.875, -0.875) / uViewport * gl_Position.w;\n";   // 2 * 7/16 px
   if (anyTexgen)                                   // view-space position for camera-space texgen
     vs += "  vec3 viewPos = (uView*uWorld*vec4(aPos,1.0)).xyz;\n";
   if (fog) {

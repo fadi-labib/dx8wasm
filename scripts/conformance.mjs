@@ -53,6 +53,7 @@ const features = [
   ['Vertex/index buffers', 'CreateVertexBuffer/IndexBuffer, Lock/Unlock, SetStreamSource, SetIndices', 'yes', 'draw_smoke'],
   ['FVF: XYZ / NORMAL / DIFFUSE / TEX1', 'attribute layout in FVF order', 'yes', 'draw_smoke / light_smoke'],
   ['FVF: XYZRHW (pre-transformed)', 'screen-space UI/HUD vertices (rhw=1)', 'yes', 'rhw_smoke'],
+  ['D3D pixel-centre convention', 'clip space translated 7/16 px so D3D-aligned 2D geometry samples texel centres (Render2D -0.5 bias); coverage + sampling on both XYZ and XYZRHW paths', 'yes', 'rhw_pixel_center_smoke / rhw_texel_exact_smoke / xyz_texel_exact_smoke'],
   ['FVF: SPECULAR', 'stride honored so uv offsets stay correct; the colour itself is dropped', 'partial', 'draw_smoke'],
   ['FVF: multi-texcoord (TEX2)', 'second uv set feeds stage 1 (attribute location 4)', 'yes', 'lit_tex_smoke'],
   ['Draw: indexed + non-indexed + user-pointer', 'DrawIndexedPrimitive/DrawPrimitive/DrawPrimitiveUP/DrawIndexedPrimitiveUP, all topologies', 'yes', 'draw_smoke / strip_smoke / drawup_smoke'],

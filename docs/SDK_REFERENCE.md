@@ -22,6 +22,19 @@ for exactly which tokens are implemented vs fall back.
 - **Coordinates**: transformed vertices are in the usual D3D clip space. For
   pre-transformed `D3DFVF_XYZRHW` vertices, positions are in **screen pixels**
   (top-left origin), `z` in `[0,1]`, `rhw = 1`.
+- **Pixel-centre convention is D3D's, on every path.** In D3D8/9 a pixel's centre sits at
+  integer screen coordinates (NDC −1 is the *centre* of pixel 0); in GL it sits at +0.5. The SDK
+  translates clip space by 7/16 of a pixel (`+0.875/W, −0.875/H`, times `w`) in every vertex
+  shader so GL rasterises and interpolates where D3D would — 7/16 rather than 1/2 because an exact
+  half lands D3D-aligned sample points on primitive edges, where GL's tie-break is
+  implementation-defined (measured: 1/16 px snapping, y-max edge exclusive). This is what makes D3D-era 2D code correct:
+  such code pre-offsets its geometry by −0.5 px to put texel centres on pixel centres (Generals'
+  `Render2DClass`, `WW3D::Set_Screen_UV_Bias(TRUE)`), and it submits that geometry as plain `XYZ`
+  clip-space vertices with identity matrices — not as `XYZRHW`. Without the translation every UI
+  sample lands on a texel *boundary*: linear filtering blends each tiled piece's edge with the
+  (often transparent) atlas texel beside it, a hairline at every piece edge. Pinned by
+  `rhw_pixel_center_smoke` (coverage) and `rhw_texel_exact_smoke` / `xyz_texel_exact_smoke`
+  (sampling); all three fail without it.
 - **The device owns the GL viewport** — you drive only D3D8, never GL directly.
 - **No blocking loop**: the browser can't block. Convert the game loop to an
   `emscripten_set_main_loop` callback.

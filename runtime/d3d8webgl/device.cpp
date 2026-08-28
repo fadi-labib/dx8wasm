@@ -1495,7 +1495,7 @@ struct Device8 : IDirect3DDevice8 {
       if (texture1) apply_sampler(stageState[1], texture1); }
 
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
-    if (rhw) glUniform2f(p->uViewport, vpW, vpH);
+    if (p->uViewport >= 0) glUniform2f(p->uViewport, vpW, vpH);   // every path: the half-pixel translation (ff_shader.cpp) needs the target size
     if (lit) set_light_uniforms(p);
     if (fogEnable) { glUniform3fv(p->uFogColor, 1, fogColor); glUniform1f(p->uFogStart, fogStart); glUniform1f(p->uFogEnd, fogEnd); }
     return true;
