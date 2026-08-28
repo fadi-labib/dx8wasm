@@ -31,20 +31,41 @@ namespace {
 // (generals.fadilabib.com, 2026-08-28). Any viewport aspect inside the band is the native
 // entry; either side of it is one of the boxes; below the floor is 1024x768.
 struct AdapterMode { UINT w, h; };
-enum { ADAPTER_MODE_COUNT = 4 };
+enum { ADAPTER_MODE_COUNT = 5 };
 inline UINT collect_modes(AdapterMode out[ADAPTER_MODE_COUNT]) {
-  int vpW = MAIN_THREAD_EM_ASM_INT({ return (window.innerWidth | 0) || 1024; });
-  int vpH = MAIN_THREAD_EM_ASM_INT({ return (window.innerHeight | 0) || 768; });
+  // DEVICE pixels, with the same `?dpr=` override the page and SDL3Main.cpp honour: since
+  // 2026-08-28 the engine renders at innerWidth * devicePixelRatio, and a list in CSS pixels
+  // matched it only at 100% display scaling -- at 125% every mode missed, Find_Color_Mode fell
+  // back to 16-bit and the player saw a black scene again (reproduced at dpr 1.25 and 2).
+  int vpW = MAIN_THREAD_EM_ASM_INT({
+    var dpr = window.devicePixelRatio || 1;
+    try { var o = parseFloat(new URLSearchParams(location.search).get('dpr')); if (o > 0) dpr = o; } catch (e) {}
+    return Math.round(window.innerWidth * dpr) || 1024;
+  });
+  int vpH = MAIN_THREAD_EM_ASM_INT({
+    var dpr = window.devicePixelRatio || 1;
+    try { var o = parseFloat(new URLSearchParams(location.search).get('dpr')); if (o > 0) dpr = o; } catch (e) {}
+    return Math.round(window.innerHeight * dpr) || 768;
+  });
   if (vpW < 320) vpW = 1024;
   if (vpH < 240) vpH = 768;
-  int boxW43 = vpW, boxH43 = vpH;                   // largest 4:3 box that fits (matches SDL3Main's old default)
+  // The canvas backing as it is RIGHT NOW. By the time an engine reaches Direct3DCreate8 it has
+  // sized its SDL window (= the canvas) to exactly the resolution it is about to request, so this
+  // entry matches whatever clamp/floor/scale rule the engine applied -- no shared arithmetic to
+  // keep in sync across two repos. The derived entries below cover an engine that sizes the
+  // canvas only after creating the device.
+  int cvW = MAIN_THREAD_EM_ASM_INT({ var c = (typeof Module !== 'undefined' && Module.canvas) || document.getElementById('canvas'); return c ? (c.width | 0) : 0; });
+  int cvH = MAIN_THREAD_EM_ASM_INT({ var c = (typeof Module !== 'undefined' && Module.canvas) || document.getElementById('canvas'); return c ? (c.height | 0) : 0; });
+  if (cvW < 320 || cvH < 240) { cvW = vpW; cvH = vpH; }
+  int boxW43 = vpW, boxH43 = vpH;                   // largest 4:3 box that fits
   if (boxW43 * 3 > boxH43 * 4) boxW43 = (boxH43 * 4) / 3;
   else if (boxW43 * 3 < boxH43 * 4) boxH43 = (boxW43 * 3) / 4;
   const int boxW169 = (vpH * 16) / 9;               // the band's wide edge for this height
-  out[0] = { (UINT)(vpW & ~1),    (UINT)(vpH & ~1)   };  // native canvas (aspect inside the band)
-  out[1] = { (UINT)(boxW43 & ~1), (UINT)(boxH43 & ~1) };  // 4:3 box (viewport taller than 4:3)
-  out[2] = { (UINT)(boxW169 & ~1), (UINT)(vpH & ~1)   };  // 16:9 box (viewport wider than 16:9)
-  out[3] = { 1024, 768 };                            // legacy fallback / the engine's floor
+  out[0] = { (UINT)(cvW & ~1),     (UINT)(cvH & ~1)    };  // the canvas backing (what the engine set, and will ask for)
+  out[1] = { (UINT)(vpW & ~1),     (UINT)(vpH & ~1)    };  // native viewport (aspect inside the band)
+  out[2] = { (UINT)(boxW43 & ~1),  (UINT)(boxH43 & ~1) };  // 4:3 box (viewport taller than 4:3)
+  out[3] = { (UINT)(boxW169 & ~1), (UINT)(vpH & ~1)    };  // 16:9 box (viewport wider than 16:9)
+  out[4] = { 1024, 768 };                            // legacy fallback / the engine's floor
   return ADAPTER_MODE_COUNT;
 }
 
@@ -79,7 +100,7 @@ struct D3D8 : IDirect3D8 {
   HRESULT GetAdapterDisplayMode(UINT, D3DDISPLAYMODE* m) override {
     if (!m) return D3DERR_INVALIDCALL;
     AdapterMode md[ADAPTER_MODE_COUNT]; collect_modes(md);
-    m->Width = md[0].w; m->Height = md[0].h; m->RefreshRate = 60; m->Format = D3DFMT_X8R8G8B8;   // native canvas
+    m->Width = md[0].w; m->Height = md[0].h; m->RefreshRate = 60; m->Format = D3DFMT_X8R8G8B8;   // the canvas backing
     return D3D_OK;
   }
   // A back buffer is what CreateDevice actually presents: an 8888/565 colour surface.
