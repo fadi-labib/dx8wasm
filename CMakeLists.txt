@@ -246,6 +246,12 @@ target_link_libraries(xyz_texel_exact_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(xyz_texel_exact_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(xyz_texel_exact_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(resource_contract_smoke runtime/test/resource_contract_smoke.cpp)
+target_include_directories(resource_contract_smoke PRIVATE runtime runtime/d3d8)
+target_link_libraries(resource_contract_smoke PRIVATE dx8_d3d8webgl)
+target_link_options(resource_contract_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
+set_target_properties(resource_contract_smoke PROPERTIES SUFFIX ".js")
+
 add_executable(strip_smoke runtime/test/strip_smoke.cpp)
 target_include_directories(strip_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(strip_smoke PRIVATE dx8_d3d8webgl)

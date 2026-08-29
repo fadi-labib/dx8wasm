@@ -294,6 +294,11 @@ struct GLBuffer {
   explicit GLBuffer(GLenum t, UINT length) : target(t), cpu(length) {}
   HRESULT Lock(UINT off, UINT size, BYTE** pp, DWORD flags) {
     if (!pp) return D3DERR_INVALIDCALL;
+    // Refuse an out-of-range lock the way real D3D8 does, instead of handing back a pointer past
+    // the staging vector's end that the caller then writes through (silent heap corruption before
+    // Unlock ever runs). size==0 means "to the end of the buffer" in D3D8. The telemetry in Unlock
+    // only observes such damage after the fact; this prevents it.
+    if (off > cpu.size() || (size && (size_t)off + size > cpu.size())) return D3DERR_INVALIDCALL;
     lock_off = off; lock_size = size; lock_flags = flags; locked = true;
     *pp = cpu.data() + off; return D3D_OK;
   }
@@ -700,7 +705,8 @@ struct Surface8 : IDirect3DSurface8 {
   UINT level;
   std::vector<BYTE> own;   // used only when parent == nullptr
   Surface8(Texture8* p, UINT lvl) : fmt(p->fmt), w(p->levels[lvl].w), h(p->levels[lvl].h), parent(p), level(lvl) { p->AddRef(); }
-  Surface8(UINT width, UINT height, D3DFORMAT format) : fmt(format), w(width), h(height), parent(nullptr), level(0), own((size_t)width * height * texfmt::bpp(format)) {}
+  Surface8(UINT width, UINT height, D3DFORMAT format) : fmt(format), w(width), h(height), parent(nullptr), level(0),
+    own(dxt::is_dxt(format) ? dxt::data_size(width, height, format) : (size_t)width * height * texfmt::bpp(format)) {}
   ~Surface8() { if (parent) parent->Release(); }
   BYTE* base() { return parent ? parent->levels[level].px.data() : own.data(); }
   HRESULT QueryInterface(REFIID, void** o) override { if (o) *o = this; return D3D_OK; }
@@ -719,6 +725,17 @@ struct Surface8 : IDirect3DSurface8 {
   HRESULT LockRect(D3DLOCKED_RECT* lr, const RECT* r, DWORD) override {
     if (!lr) return D3DERR_INVALIDCALL;
     UINT top = r ? (UINT)r->top : 0, left = r ? (UINT)r->left : 0;
+    if (dxt::is_dxt(fmt)) {
+      // Block-compressed: pitch is bytes per ROW OF 4x4 BLOCKS, offset is block-granular -- the
+      // same convention Texture8::LockRect uses. Treating DXT as bpp bytes/pixel (the old code)
+      // reported a 4x-too-large pitch and a wrong sub-rect offset; harmless for the full-surface
+      // locks the engine's DDS loader does (it fills contiguously from the origin, ignoring pitch)
+      // but wrong for any sub-rect or CopyRects consumer.
+      const UINT bb = dxt::block_bytes(fmt);
+      lr->Pitch = (int32_t)(((w + 3) / 4) * bb);
+      lr->pBits = base() + (size_t)(top / 4) * (size_t)lr->Pitch + (size_t)(left / 4) * bb;
+      return D3D_OK;
+    }
     const UINT bp = texfmt::bpp(fmt);
     lr->Pitch = (int32_t)(w * bp);
     lr->pBits = base() + (size_t)top * (w * bp) + (size_t)left * bp;
@@ -906,6 +923,7 @@ struct Device8 : IDirect3DDevice8 {
       if (stream) stream->Release();
       if (indices) indices->Release();
       if (texture) texture->Release();
+      if (texture1) texture1->Release();   // stage-1 multitexture slot -- was leaked (GL texture too) on teardown
       platform::destroy_gl_context();
       delete this;
     }
@@ -1584,6 +1602,17 @@ struct Device8 : IDirect3DDevice8 {
       RECT r = srcRects ? srcRects[i] : RECT{0, 0, (LONG)s->w, (LONG)s->h};
       POINT p = dstPoints ? dstPoints[i] : POINT{r.left, r.top};
       UINT rw = (UINT)(r.right - r.left), rh = (UINT)(r.bottom - r.top);
+      if (dxt::is_dxt(s->fmt)) {
+        // Block-compressed copy: stride is a row of 4x4 blocks, and rects/points are block-granular.
+        const UINT bb = dxt::block_bytes(s->fmt);
+        const size_t sPitch = (size_t)((s->w + 3) / 4) * bb, dPitch = (size_t)((d->w + 3) / 4) * bb;
+        for (UINT by = 0; by < rh; by += 4) {
+          const BYTE* sp = s->base() + (size_t)((r.top + by) / 4) * sPitch + (size_t)(r.left / 4) * bb;
+          BYTE* dp = d->base() + (size_t)((p.y + by) / 4) * dPitch + (size_t)(p.x / 4) * bb;
+          std::memcpy(dp, sp, (size_t)((rw + 3) / 4) * bb);
+        }
+        continue;
+      }
       for (UINT y = 0; y < rh; ++y) {
         const BYTE* sp = s->base() + (size_t)(r.top + y) * (s->w * bpp) + (size_t)r.left * bpp;
         BYTE* dp = d->base() + (size_t)(p.y + y) * (d->w * bpp) + (size_t)p.x * bpp;
@@ -1645,7 +1674,10 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT CreateStateBlock(D3DSTATEBLOCKTYPE, DWORD* t) override { if (t) *t = 0; warn_once("CreateStateBlock"); return D3DERR_INVALIDCALL; }
   HRESULT SetClipStatus(const D3DCLIPSTATUS8*) override { return D3D_OK; }
   HRESULT GetClipStatus(D3DCLIPSTATUS8* s) override { if (s) { s->ClipUnion = 0; s->ClipIntersection = 0xffffffff; } return D3D_OK; }
-  HRESULT GetTexture(DWORD, IDirect3DBaseTexture8** o) override { if (o) { *o = texture; if (texture) texture->AddRef(); } return D3D_OK; }
+  HRESULT GetTexture(DWORD Stage, IDirect3DBaseTexture8** o) override {
+    if (o) { Texture8* t = Stage == 0 ? texture : (Stage == 1 ? texture1 : nullptr); *o = t; if (t) t->AddRef(); }
+    return D3D_OK;
+  }
   HRESULT GetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD* v) override {
     if (!v) return D3DERR_INVALIDCALL;
     if (Stage >= kStageCount || Type >= kStageStateCount) return D3DERR_INVALIDCALL;

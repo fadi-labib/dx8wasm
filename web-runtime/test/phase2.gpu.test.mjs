@@ -74,6 +74,7 @@ const SMOKES = [
   ['rhw_pixel_center_smoke', [0, 255, 0, 255]], // D3D pixel centres: a 1px quad at 9.5..10.5 lights pixel 10, not 9
   ['rhw_texel_exact_smoke', [64, 64, 64, 255]], // a 1:1 UI piece blit reproduces its LAST texel column exactly (no seam from the atlas neighbour)
   ['xyz_texel_exact_smoke', [64, 64, 64, 255]], // same through Render2D's real path: clip-space XYZ + identity matrices + the -0.5 bias; a transparent atlas neighbour must not halve the edge alpha
+  ['resource_contract_smoke', [1, 0, 0, 255]], // DXT surface pitch is block-based; out-of-range buffer Lock refuses; GetTexture honours Stage
   ['strip_smoke', [0, 255, 255, 255]],         // triangle strip (primCount 2 -> 4 indices) fills the quad
   ['combiner_smoke', [128, 128, 128, 255]],    // D3DTOP_ADD: tex(0.3,0.2,0.1) + diffuse(0.2,0.3,0.4)
   ['compat_smoke', [1, 0, 0, 255]],            // compatlib Tier 0 timing self-test (no GL)
