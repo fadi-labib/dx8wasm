@@ -5,7 +5,9 @@ several of its own premises, a four-tier plan, and a parallel execution in which
 tasks found a defect in the plan's own code**. This records what shipped, what the docs claimed
 before they were checked, what was deliberately left undone, and the lessons worth citing later.
 
-Plan: [`superpowers/plans/2026-08-01-close-the-remaining-docs-items.md`](superpowers/plans/2026-08-01-close-the-remaining-docs-items.md).
+Plan: `superpowers/plans/2026-08-01-close-the-remaining-docs-items.md` — a 1,900-line, machine-specific
+execution recipe, retired from the tree on 2026-09-03 (in git history before that date). This document
+is its outcome and carries everything reusable from it.
 Range: `bc7ae37..a71e6f3` — 22 non-merge commits, of which 13 are the ten planned tasks across four
 merged branches and the rest are setup plus the final-review fix wave described at the end.
 

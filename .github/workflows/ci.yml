@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# dx8wasm CI. Inactive until this repo has a GitHub remote; then it runs on every
-# push/PR. It just invokes scripts/ci.sh — the same guardrails you run locally.
+# dx8wasm CI: runs on every push/PR. It just invokes scripts/ci.sh — the same guardrails
+# you run locally — on a pinned emsdk plus Playwright's Chromium (SwiftShader WebGL2).
 name: ci
 on:
   push:

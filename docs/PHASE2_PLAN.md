@@ -105,6 +105,6 @@ its smoke tests exercise:
 - FVF vertex formats
 - only 8 real `.vso/.pso` SM1.x shaders (fixed-function dominates)
 
-DXVK `d3d9_fixed_function.cpp` (2,661 lines, zlib) is the behavioral reference:
-local copy at `~/projects/personal/Generals-Mac-iOS-iPad/references/fadi-labib-dxvk/`.
+DXVK `d3d9_fixed_function.cpp` (2,661 lines, zlib) is the behavioral reference
+(github.com/doitsujin/dxvk).
 Cross-check Wine `wined3d` but never paste (LGPL).

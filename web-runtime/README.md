@@ -7,9 +7,9 @@ reference is out of scope here — that belongs to a consuming game.)
 Nothing in this directory may depend on a specific game. Everything here runs standalone
 with `npm test` and touches no path outside this repo. Game-coupled test harnesses (ones that
 `spawn('node', ['scripts/serve-game.mjs'])` or otherwise reach into a consuming game's build
-output) belong in that game's own repo, not here — see e.g.
-[`generals-dx8wasm/web-runtime/`](../../generals-dx8wasm/web-runtime/README.md), which adopted
-this repo's Generals-specific harnesses on 2026-07-31 for exactly that reason.
+output) belong in that game's own repo, not here — the Generals integration repo
+(`generals-dx8wasm`) adopted this repo's Generals-specific harnesses on 2026-07-31 for exactly
+that reason.
 
 ## Status
 
@@ -36,9 +36,9 @@ this repo's Generals-specific harnesses on 2026-07-31 for exactly that reason.
 
 Read this before improving it. The Generals port **does not use `onboard.js`**. It grew its own
 onboarding into `generals-dx8wasm/web/byo-*.js`: an eight-step wizard, an install manifest, size-based
-verification on every boot, and targeted repair of evicted files. That decision is recorded as D4 in
-`generals-dx8wasm/docs/superpowers/specs/2026-08-06-byo-onboarding-wizard-design.md`, along with its
-stated cost — **two onboarding implementations now exist and will drift.**
+verification on every boot, and targeted repair of evicted files. That decision (D4 in the
+integration repo's 2026-08-06 onboarding-wizard design) came with a stated cost — **two onboarding
+implementations now exist and will drift.**
 
 This one was deliberately kept rather than deleted: it is generic over games via a profile object,
 it is covered by `test/onboard.browser.test.mjs` in this repo's `npm test`, and it is the thing a
@@ -72,6 +72,6 @@ cd web-runtime && npm install && npm test
 
 The browser has no native brotli (`DecompressionStream` is gzip/deflate only),
 so `gaxd.js` takes an **injected** `decompress(Uint8Array) => Uint8Array`. Node
-tests inject `zlib.brotliDecompressSync`; the browser injects a wasm brotli
-decoder (vendored later, not yet in-tree). Keeping decompression out of the
+tests inject `zlib.brotliDecompressSync`; the browser injects the wasm brotli
+decoder vendored at `vendor/brotli/`. Keeping decompression out of the
 decoder is what makes the format logic testable without a browser.

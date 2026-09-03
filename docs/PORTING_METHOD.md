@@ -67,8 +67,8 @@ When adopting DXVK/ANGLE/Wine pieces:
 
 - **Session handoff docs** (blockers+evidence, achievements+paths, explicit next task).
 - **A lessons library with stable IDs** — every painful debug becomes a citable artifact.
-  See `generals-dx8wasm/docs/RESULTS-2026-07-31-telemetry-verification-program.md` — 40 of
-  its 84 lessons are SDK-side — and, in this repo,
+  See the Generals integration repo's telemetry-verification results (2026-07-31; 40 of
+  its 84 lessons are SDK-side) and, in this repo,
   [`RESULTS-2026-08-01-close-the-docs-items.md`](RESULTS-2026-08-01-close-the-docs-items.md)
   (`CDI-1`..`CDI-29`).
 - **Source-annotation convention** on every change (`// project @bugfix author date desc`) — keeps a huge port diffable and upstream-mergeable.

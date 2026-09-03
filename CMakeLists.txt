@@ -122,7 +122,8 @@ target_link_options(draw_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(draw_smoke PROPERTIES SUFFIX ".js")
 
 # The only smoke that exercises GLBuffer::Unlock's partial-range upload. Every other one locks a
-# whole buffer, so they all take the glBufferData respecify branch (GT-09).
+# whole buffer, so they all take the glBufferData respecify branch (GT-09 -- GT-nn / AB-nn are
+# lesson IDs from the Generals integration repo's results docs, where these were measured).
 add_executable(buffer_range_smoke runtime/test/buffer_range_smoke.cpp)
 target_include_directories(buffer_range_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(buffer_range_smoke PRIVATE dx8_d3d8webgl)
@@ -252,13 +253,13 @@ target_link_libraries(resource_contract_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(resource_contract_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(resource_contract_smoke PROPERTIES SUFFIX ".js")
 
-add_executable(strip_smoke runtime/test/strip_smoke.cpp)
 add_executable(index32_smoke runtime/test/index32_smoke.cpp)
 target_include_directories(index32_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(index32_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(index32_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})
 set_target_properties(index32_smoke PROPERTIES SUFFIX ".js")
 
+add_executable(strip_smoke runtime/test/strip_smoke.cpp)
 target_include_directories(strip_smoke PRIVATE runtime runtime/d3d8)
 target_link_libraries(strip_smoke PRIVATE dx8_d3d8webgl)
 target_link_options(strip_smoke PRIVATE ${DX8_WEBGL_LINK} ${DX8_SDL3})

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Covers GLBuffer::Unlock's PARTIAL-RANGE upload path (glBufferSubData), which no other smoke
 // reaches: every one of them locks a whole buffer, so they all take the glBufferData respecify
-// branch and would stay green if the sub-range path were completely broken. That gap is GT-09 --
+// branch and would stay green if the sub-range path were completely broken. That gap is GT-09 (a
+// lesson ID from the Generals integration repo's results docs) --
 // the 24 pixel smokes and the determinism digest passed byte-identically across the behaviour
 // change that introduced this path.
 //

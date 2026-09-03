@@ -33,7 +33,8 @@ const SMOKES = [
   ['draw_tex_smoke', [128, 128, 64, 255]], // diffuse(.502,1,1) * texel(1,.502,.251) modulate
   // The ONLY cover for Unlock's partial-range upload (glBufferSubData). Every other smoke here
   // locks a whole buffer and so takes the glBufferData respecify branch -- which is why all 24 of
-  // them stayed byte-identical across the change that introduced the sub-range path (GT-09).
+  // them stayed byte-identical across the change that introduced the sub-range path (GT-09; the
+  // GT-nn / AB-nn IDs are lessons in the Generals integration repo's results docs).
   // Internally checked: a full-buffer write of red, then a sub-range write of green over the right
   // half only. Left must stay red (bytes outside the lock survived) and right must be green (the
   // locked range landed at the right offset). A zeroed offset inverts the halves; a lost remainder
@@ -76,8 +77,8 @@ const SMOKES = [
   ['rhw_texel_exact_smoke', [64, 64, 64, 255]], // a 1:1 UI piece blit reproduces its LAST texel column exactly (no seam from the atlas neighbour)
   ['xyz_texel_exact_smoke', [64, 64, 64, 255]], // same through Render2D's real path: clip-space XYZ + identity matrices + the -0.5 bias; a transparent atlas neighbour must not halve the edge alpha
   ['resource_contract_smoke', [1, 0, 0, 255]], // DXT surface pitch is block-based; out-of-range buffer Lock refuses; GetTexture honours Stage
-  ['strip_smoke', [0, 255, 255, 255]],         // triangle strip (primCount 2 -> 4 indices) fills the quad
   ['index32_smoke', [0, 255, 0, 255]],         // a D3DFMT_INDEX32 buffer through DrawIndexedPrimitive is read as 32-bit indices, not u16 pairs
+  ['strip_smoke', [0, 255, 255, 255]],         // triangle strip (primCount 2 -> 4 indices) fills the quad
   ['combiner_smoke', [128, 128, 128, 255]],    // D3DTOP_ADD: tex(0.3,0.2,0.1) + diffuse(0.2,0.3,0.4)
   ['compat_smoke', [1, 0, 0, 255]],            // compatlib Tier 0 timing self-test (no GL)
   ['compat_file_smoke', [1, 0, 0, 255]],       // compatlib Tier 1 file/dir/memory self-test (no GL)

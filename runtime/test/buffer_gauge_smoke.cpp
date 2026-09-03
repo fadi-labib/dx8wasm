@@ -23,7 +23,8 @@
 //
 //   Window 2 -- buffer B, fresh, whose FIRST lock is the sub-range. Unlock must upload the
 //   WHOLE buffer regardless (glBufferSubData cannot create storage, and the bytes outside the
-//   lock must become the staging zeros -- AB-13: that is correctness, not optimisation), while
+//   lock must become the staging zeros -- AB-13, a lesson ID from the Generals integration repo's
+//   results docs: that is correctness, not optimisation), while
 //   only n/2 bytes were locked. ratio EXACTLY 2.0.
 //     * This is the state where the gauge MUST report waste, produced by behaviour the code is
 //       REQUIRED to have -- so the "can it read anything but 1.0" half of the oracle can never

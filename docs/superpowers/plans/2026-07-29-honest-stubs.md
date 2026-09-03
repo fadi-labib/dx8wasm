@@ -28,9 +28,9 @@ smokes driven by `web-runtime/test/phase2.gpu.test.mjs`.
 - Author every commit as `Fadi Labib <github@fadilabib.com>`. Never add an AI co-author line.
 - SPDX header `// SPDX-License-Identifier: GPL-3.0-only` on every new file.
 - `bash scripts/ci.sh` must print `ALL GREEN` before any task is considered done.
-- Emscripten SDK pinned to 6.0.2 (`.emscripten-version`); `source ~/emsdk/emsdk_env.sh` first.
+- Emscripten SDK pinned to 6.0.2 (`.emscripten-version`); `source <emsdk>/emsdk_env.sh` first.
 - Headless smokes render to a **4×4** canvas — they cannot catch viewport/full-canvas bugs.
-- The consuming game (`../generals-dx8wasm`) compiles against **DXVK's** full-ABI `d3d8.h`
+- The consuming game (the Generals integration repo, `generals-dx8wasm`) compiles against **DXVK's** full-ABI `d3d8.h`
   (`build/wasm-engine-release/_deps/dxvk-src/include/dxvk/d3d8types.h`) while linking dx8wasm's
   implementation. Any struct dx8wasm writes through must match that layout **exactly**.
 - Do not rename existing public symbols; `runtime/include/dx8wasm/contract.h` is the ABI.
@@ -59,7 +59,7 @@ smokes driven by `web-runtime/test/phase2.gpu.test.mjs`.
 | `web-runtime/test/phase2.gpu.test.mjs` | expected sentinel pixels for the new smokes | 2, 6 |
 | `docs/CONFORMANCE.md` | regenerated from the probe | 8 |
 | `docs/SDK_REFERENCE.md` | document the "stubs fail loudly" contract | 8 |
-| `../generals-dx8wasm/docs/OPEN-ITEMS.md` | record the audit + outcome game-side | 8 |
+| the integration repo's `docs/OPEN-ITEMS.md` | record the audit + outcome game-side | 8 |
 
 ---
 
@@ -123,7 +123,7 @@ the include next to the existing ones near the top of the file:
 - [ ] **Step 3: Build and run the full suite — nothing should change**
 
 ```bash
-source ~/emsdk/emsdk_env.sh && cmake --build build/emscripten && node web-runtime/test/phase2.gpu.test.mjs
+source <emsdk>/emsdk_env.sh && cmake --build build/emscripten && node web-runtime/test/phase2.gpu.test.mjs
 ```
 Expected: every smoke reports `ok`, in particular `dxt_smoke` and `texfmt_smoke`.
 
@@ -252,7 +252,7 @@ In `web-runtime/test/phase2.gpu.test.mjs`, add to the expectations list next to 
 - [ ] **Step 3: Run it and watch it fail**
 
 ```bash
-source ~/emsdk/emsdk_env.sh && cmake --build build/emscripten && node web-runtime/test/phase2.gpu.test.mjs
+source <emsdk>/emsdk_env.sh && cmake --build build/emscripten && node web-runtime/test/phase2.gpu.test.mjs
 ```
 Expected: FAIL — `caps_query_smoke: D3DFMT_UNKNOWN was accepted` (the first refusal check to
 run against the current blanket `D3D_OK`).
@@ -870,7 +870,7 @@ bugs (blocky textures, A4R4G4B4 alpha loss). This task is the gate.
 
 **Files:**
 - Modify: `docs/CONFORMANCE.md` (regenerated), `docs/SDK_REFERENCE.md`
-- Modify: `../generals-dx8wasm/docs/OPEN-ITEMS.md`
+- Modify: the integration repo's `docs/OPEN-ITEMS.md`
 
 - [ ] **Step 1: Full CI**
 
@@ -882,7 +882,8 @@ Expected: `ALL GREEN`.
 - [ ] **Step 2: Rebuild the game against the changed runtime**
 
 ```bash
-cd ../generals-dx8wasm && BUILD_TYPE=Release bash scripts/build-engine.sh z_generals
+# in the integration repo:
+BUILD_TYPE=Release bash scripts/build-engine.sh z_generals
 ```
 Expected: exit 0, and `device.cpp.o` freshly rebuilt under
 `build/wasm-engine-release/CMakeFiles/dx8wasm_backend.dir/`. Confirm the artifact was relinked
@@ -928,7 +929,7 @@ the `GetRenderState`/`COLORWRITEENABLE` incident as the worked example of why.
 
 - [ ] **Step 7: Record the outcome game-side**
 
-In `../generals-dx8wasm/docs/OPEN-ITEMS.md` §0, extend the existing Detail=High entry with a
+In the integration repo's `docs/OPEN-ITEMS.md` §0, extend the existing Detail=High entry with a
 line noting the follow-up audit: which stubs were found, that they are now fixed upstream in
 dx8wasm, and the commit range.
 
@@ -936,7 +937,8 @@ dx8wasm, and the commit range.
 
 ```bash
 cd ../dx8wasm && git add docs/ && git commit -m "docs: record the honest-stub contract and regenerate the conformance matrix"
-cd ../generals-dx8wasm && git add docs/OPEN-ITEMS.md && git commit -m "docs: record the dx8wasm stub audit outcome"
+# in the integration repo:
+git add docs/OPEN-ITEMS.md && git commit -m "docs: record the dx8wasm stub audit outcome"
 ```
 
 ---

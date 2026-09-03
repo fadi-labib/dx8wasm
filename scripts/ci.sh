@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-only
 # Full guardrail run: mechanical checks + pinned toolchain + every test suite.
-# Works locally today; the GitHub Actions workflow (.github/workflows/ci.yml)
-# runs this same script once a remote exists.
+# The GitHub Actions workflow (.github/workflows/ci.yml) runs this same script on every push.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -18,9 +17,9 @@ echo "  emcc $have (pinned)"
 
 echo "== packer selftest =="
 python3 asset-tools/pack.py --selftest
+
 echo "== dev-server selftest =="
 python3 tools/serve-https.py --selftest
-
 
 echo "== harness dependencies =="
 # web-runtime/node_modules/ is gitignored and this script has no install step, so on a fresh checkout
@@ -29,8 +28,8 @@ echo "== harness dependencies =="
 # passes with nothing installed; the failure surfaces at loader.browser.test.mjs, which is not the
 # file that is wrong. Fail here, with the command, rather than there with a stack trace.
 #
-# Ported from the integration repo (generals-dx8wasm/scripts/ci.sh), which grew this check hours
-# before this repo hit the identical failure. The browsers are a SECOND install: package.json floats
+# Ported from the Generals integration repo's ci.sh, which grew this check hours before this
+# repo hit the identical failure. The browsers are a SECOND install: package.json floats
 # ^1.48.0 and the lockfile pins a specific build, which wants a Chromium an older
 # ~/.cache/ms-playwright will not have. Playwright's own launch error is explicit about that half,
 # so this only guards the package half.

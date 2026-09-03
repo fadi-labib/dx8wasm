@@ -9,7 +9,7 @@ Canonical sources live in the repo; regenerate after edits.
 
 # AGENTS.md — working in the dx8wasm repo
 
-Instructions for AI coding agents contributing to **dx8wasm**, a clean-room
+Instructions for AI coding agents contributing to **dx8wasm**, an independent
 DirectX-8 → WebAssembly (WebGL2) translation SDK for porting DX8-era games to the
 browser. If you are *consuming* the SDK to build a game/app, read
 [`docs/SDK_REFERENCE.md`](docs/SDK_REFERENCE.md) and
@@ -29,13 +29,14 @@ browser. If you are *consuming* the SDK to build a game/app, read
 
 | Path | What |
 |------|------|
-| `runtime/d3d8/d3d8.h` | Clean-room D3D8 API subset (the game-facing header) |
+| `runtime/d3d8/d3d8.h` | Independently written D3D8 API subset (the game-facing header) |
 | `runtime/d3d8webgl/` | The device — translates D3D8 calls to WebGL2 |
 | `runtime/graphics-ff/` | Fixed-function shader generator (FVF/state → cached GLSL program) |
 | `runtime/coverage/` | Coverage/fallback layer + `contract.h` introspection |
-| `runtime/platform/` | SDL3 → WebGL2 window/context/input seam |
+| `runtime/platform/` | SDL3 → WebGL2 window/context/input seam, plus `opfs_bridge.cpp` (opt-in on-demand OPFS reads; built into `dx8_d3d8webgl`, see `docs/ARCHITECTURE.md`) |
 | `runtime/compatlib/` | Win32 → POSIX shims (tiered; see `docs/COMPATLIB.md`) |
 | `runtime/include/dx8wasm/contract.h` | The dx8wasm-specific ABI (init, input, coverage) |
+| `runtime/include/dx8wasm/opfs.h` | Optional: ranged reads from OPFS instead of resident archives (`docs/SDK_REFERENCE.md` §4) |
 | `runtime/test/` | Headless pixel/self-test smokes (one per feature) |
 | `web-runtime/` | Phase 1 asset loader + the JS test harness |
 | `asset-tools/` | GAXD asset packer |
@@ -45,11 +46,13 @@ browser. If you are *consuming* the SDK to build a game/app, read
 
 ## Non-negotiable conventions
 
-1. **Clean-room.** Re-derive from behavior and public API specs. You **may study**
-   the DXVK reference (`~/projects/personal/Generals-Mac-iOS-iPad/references/fadi-labib-dxvk/`,
-   zlib) and the reference port's compat *surface* (which symbols) — but **never
-   paste** code, and **never** read Wine `wined3d` implementation (LGPL). Cite the
-   behavioral source in the commit message.
+1. **Independent reimplementation, no code copied.** Re-derive from behavior and
+   public API specs. You **may study** DXVK (zlib; `d3d9_fixed_function.cpp` is the
+   fixed-function model), GeneralsX and the Lolendor web fork for *behavior* and for
+   which Win32/D3D8 symbols a game needs — but **never paste** code from any of them,
+   and **never** read Wine `wined3d` implementation (LGPL). Cite the behavioral source
+   in the commit message. The tree has no extracted upstream files; keep it that way or
+   follow `docs/LICENSING.md` to the letter.
 2. **Coverage, not silence.** Any D3D8 token / Win32 case you don't implement must
    **log loudly + fall back + count** (via `runtime/coverage/` or an `fprintf`),
    never render/return silently wrong. This is the SDK's core discipline.
@@ -113,6 +116,19 @@ for exactly which tokens are implemented vs fall back.
 - **Coordinates**: transformed vertices are in the usual D3D clip space. For
   pre-transformed `D3DFVF_XYZRHW` vertices, positions are in **screen pixels**
   (top-left origin), `z` in `[0,1]`, `rhw = 1`.
+- **Pixel-centre convention is D3D's, on every path.** In D3D8/9 a pixel's centre sits at
+  integer screen coordinates (NDC −1 is the *centre* of pixel 0); in GL it sits at +0.5. The SDK
+  translates clip space by 7/16 of a pixel (`+0.875/W, −0.875/H`, times `w`) in every vertex
+  shader so GL rasterises and interpolates where D3D would — 7/16 rather than 1/2 because an exact
+  half lands D3D-aligned sample points on primitive edges, where GL's tie-break is
+  implementation-defined (measured: 1/16 px snapping, y-max edge exclusive). This is what makes D3D-era 2D code correct:
+  such code pre-offsets its geometry by −0.5 px to put texel centres on pixel centres (Generals'
+  `Render2DClass`, `WW3D::Set_Screen_UV_Bias(TRUE)`), and it submits that geometry as plain `XYZ`
+  clip-space vertices with identity matrices — not as `XYZRHW`. Without the translation every UI
+  sample lands on a texel *boundary*: linear filtering blends each tiled piece's edge with the
+  (often transparent) atlas texel beside it, a hairline at every piece edge. Pinned by
+  `rhw_pixel_center_smoke` (coverage) and `rhw_texel_exact_smoke` / `xyz_texel_exact_smoke`
+  (sampling); all three fail without it.
 - **The device owns the GL viewport** — you drive only D3D8, never GL directly.
 - **No blocking loop**: the browser can't block. Convert the game loop to an
   `emscripten_set_main_loop` callback.
@@ -415,7 +431,7 @@ Include paths: `runtime/`, `runtime/d3d8/`, `runtime/include/`.
 ### 2. Point the game's D3D8 include at ours
 The game includes `<d3d8.h>`; make that resolve to
 [`runtime/d3d8/d3d8.h`](../runtime/d3d8/d3d8.h) (add it to the include path, or
-alias it). It's a clean-room subset — if the game uses a method not declared
+alias it). It's an independently written subset — if the game uses a method not declared
 there, add the declaration and implement it in `runtime/d3d8webgl/device.cpp`
 (the coverage counters and link errors tell you what's missing).
 
@@ -506,7 +522,7 @@ workflow see [`AGENTS.md`](../AGENTS.md).
         │  #include <d3d8.h>, <windows.h>, dx8wasm/contract.h
         ▼
 ┌───────────────────────────────────────────────────────────┐
-│ runtime/d3d8/d3d8.h        clean-room D3D8 API subset       │  ← the game-facing header
+│ runtime/d3d8/d3d8.h        independent D3D8 API subset      │  ← the game-facing header
 ├───────────────────────────────────────────────────────────┤
 │ runtime/d3d8webgl/         Device8 — translates D3D8→GLES3  │  lib: dx8_d3d8webgl
 │   device.cpp   state, buffers, textures, DrawIndexedPrimitive
@@ -610,7 +626,7 @@ The Win32 surface a real DX8 game (target: C&C Generals) needs beyond D3D8, in
 **build order** — each tier unblocks the next stage of boot. Derived from the
 symbols the reference port shims (studied for *what* is called, not *how* — the
 implementations below are the standard Win32→POSIX/emscripten mappings, to be
-clean-room written under `runtime/compatlib/`).
+independently written under `runtime/compatlib/`).
 
 This is the game-side integration work `docs/INTEGRATION.md` refers to. Build a
 tier, hit the next wall of undefined symbols, build the next tier. Stub loudly
@@ -744,8 +760,11 @@ coverage layer — never silently wrong.
 | COM ABI | full IDirect3DDevice8 vtable (~94 methods, canonical order); rest stubbed->coverage | ✅ yes | abi_smoke |
 | Device / present | Direct3DCreate8, CreateDevice, Clear, Present, Begin/EndScene, Reset | ✅ yes | d3d8_smoke / abi_smoke |
 | Vertex/index buffers | CreateVertexBuffer/IndexBuffer, Lock/Unlock, SetStreamSource, SetIndices | ✅ yes | draw_smoke |
+| Index formats: INDEX16 / INDEX32 | DrawIndexedPrimitive sizes glDrawElements from the buffer format; other formats refused at CreateIndexBuffer | ✅ yes | index32_smoke / resource_contract_smoke |
+| Resource contract: bounds + round-trips | Lock/LockRect/CopyRects refuse out-of-range, mismatched-format or off-block-grid requests; GetTexture/GetIndices return what was set; a real bind to stage >= 2 or stream != 0 is counted (MaxStreams = 1) | ✅ yes | resource_contract_smoke |
 | FVF: XYZ / NORMAL / DIFFUSE / TEX1 | attribute layout in FVF order | ✅ yes | draw_smoke / light_smoke |
 | FVF: XYZRHW (pre-transformed) | screen-space UI/HUD vertices (rhw=1) | ✅ yes | rhw_smoke |
+| D3D pixel-centre convention | clip space translated 7/16 px so D3D-aligned 2D geometry samples texel centres (Render2D -0.5 bias); coverage + sampling on both XYZ and XYZRHW paths | ✅ yes | rhw_pixel_center_smoke / rhw_texel_exact_smoke / xyz_texel_exact_smoke |
 | FVF: SPECULAR | stride honored so uv offsets stay correct; the colour itself is dropped | 🟡 partial | draw_smoke |
 | FVF: multi-texcoord (TEX2) | second uv set feeds stage 1 (attribute location 4) | ✅ yes | lit_tex_smoke |
 | Draw: indexed + non-indexed + user-pointer | DrawIndexedPrimitive/DrawPrimitive/DrawPrimitiveUP/DrawIndexedPrimitiveUP, all topologies | ✅ yes | draw_smoke / strip_smoke / drawup_smoke |

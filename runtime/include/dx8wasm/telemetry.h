@@ -54,7 +54,7 @@ void dx8wasm_tel_span(const char* name, double ms);
 // nothing in normal play does — but that is only observable if the series is kept in
 // order and compared sample-to-sample, which is what the reducer's `decreases`
 // statistic does. Aggregates cannot see it and timing observables lie about it (see
-// generals-dx8wasm docs/HANDOVER-2026-08-04.md §2.0).
+// the Generals integration repo, generals-dx8wasm, docs/HANDOVER-2026-08-04.md §2.0).
 //
 // The value survives the round trip exactly: gauges serialise with full double
 // precision, unlike spans (6 significant digits, ample for a millisecond duration
