@@ -1,6 +1,6 @@
 # AGENTS.md — working in the dx8wasm repo
 
-Instructions for AI coding agents contributing to **dx8wasm**, a clean-room
+Instructions for AI coding agents contributing to **dx8wasm**, an independent
 DirectX-8 → WebAssembly (WebGL2) translation SDK for porting DX8-era games to the
 browser. If you are *consuming* the SDK to build a game/app, read
 [`docs/SDK_REFERENCE.md`](docs/SDK_REFERENCE.md) and
@@ -20,7 +20,7 @@ browser. If you are *consuming* the SDK to build a game/app, read
 
 | Path | What |
 |------|------|
-| `runtime/d3d8/d3d8.h` | Clean-room D3D8 API subset (the game-facing header) |
+| `runtime/d3d8/d3d8.h` | Independently written D3D8 API subset (the game-facing header) |
 | `runtime/d3d8webgl/` | The device — translates D3D8 calls to WebGL2 |
 | `runtime/graphics-ff/` | Fixed-function shader generator (FVF/state → cached GLSL program) |
 | `runtime/coverage/` | Coverage/fallback layer + `contract.h` introspection |
@@ -37,11 +37,13 @@ browser. If you are *consuming* the SDK to build a game/app, read
 
 ## Non-negotiable conventions
 
-1. **Clean-room.** Re-derive from behavior and public API specs. You **may study**
-   the DXVK reference (`~/projects/personal/Generals-Mac-iOS-iPad/references/fadi-labib-dxvk/`,
-   zlib) and the reference port's compat *surface* (which symbols) — but **never
-   paste** code, and **never** read Wine `wined3d` implementation (LGPL). Cite the
-   behavioral source in the commit message.
+1. **Independent reimplementation, no code copied.** Re-derive from behavior and
+   public API specs. You **may study** DXVK (zlib; `d3d9_fixed_function.cpp` is the
+   fixed-function model), GeneralsX and the Lolendor web fork for *behavior* and for
+   which Win32/D3D8 symbols a game needs — but **never paste** code from any of them,
+   and **never** read Wine `wined3d` implementation (LGPL). Cite the behavioral source
+   in the commit message. The tree has no extracted upstream files; keep it that way or
+   follow `docs/LICENSING.md` to the letter.
 2. **Coverage, not silence.** Any D3D8 token / Win32 case you don't implement must
    **log loudly + fall back + count** (via `runtime/coverage/` or an `fprintf`),
    never render/return silently wrong. This is the SDK's core discipline.

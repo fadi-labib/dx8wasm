@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// compatlib Tier 3 — the D3DX helper math a DX8 game leans on. Clean-room from
+// compatlib Tier 3 — the D3DX helper math a DX8 game leans on. Written independently from
 // the documented D3DX semantics: matrices are row-major and applied as row
 // vectors (v' = v·M), matching d3d8.h's D3DMATRIX and dx8wasm's transform path.
 #ifndef DX8WASM_D3DX8MATH_H

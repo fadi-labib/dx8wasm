@@ -4,7 +4,7 @@ The Win32 surface a real DX8 game (target: C&C Generals) needs beyond D3D8, in
 **build order** — each tier unblocks the next stage of boot. Derived from the
 symbols the reference port shims (studied for *what* is called, not *how* — the
 implementations below are the standard Win32→POSIX/emscripten mappings, to be
-clean-room written under `runtime/compatlib/`).
+independently written under `runtime/compatlib/`).
 
 This is the game-side integration work `docs/INTEGRATION.md` refers to. Build a
 tier, hit the next wall of undefined symbols, build the next tier. Stub loudly

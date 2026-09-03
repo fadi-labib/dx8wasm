@@ -1,49 +1,37 @@
 # Third-Party Licenses
 
-dx8wasm itself is GPL-3.0-only (see `LICENSE` + `EA_ADDITIONAL_TERMS.md`). This
-file inventories external code we extract, vendor, or link, and its license.
-Keep it current whenever a dependency is added or a source is extracted.
+dx8wasm is GPL-3.0-only by choice (see `LICENSE` and `docs/LICENSING.md`). This
+file inventories the external code the SDK actually links or vendors, and the
+projects it studied for behaviour without copying code. Keep it current whenever
+a dependency is added.
 
-## Upstreams we attribute (GPL-3.0-only, carry EA notices + §7 terms)
+## Linked or vendored today
 
-| Upstream | Role |
-|---|---|
-| **EA** — C&C Generals / Zero Hour source | Root copyright. GPLv3 + §7 terms. |
-| **fbraz3/GeneralsX** | Human-authored cross-platform port; authoritative derivative upstream. Preserve its copyright on extracted files. |
+| Library | License | Where | GPLv3-compatible? |
+|---|---|---|---|
+| SDL3 | zlib | Emscripten port, pulled by the toolchain at build time (`CMakeLists.txt`); not in tree | yes |
+| brotli-wasm 3.0.1 (web build) | Apache-2.0 | vendored at `web-runtime/vendor/brotli/`, LICENSE alongside | yes |
 
-**Lolendor/Generals-WebAssembly** is an AI-generated web fork — a low-trust
-*reference* for the WebGL2 approach, **not** an upstream we attribute. Anything
-we take from it is still GPL-3.0-only (EA root); prefer re-deriving over copying.
+## Reference sources: behaviour studied, no code copied
 
-## Extracted components (all GPL-3.0-only)
-
-| Component | Derived from | Note |
+| Project | License | How it was used |
 |---|---|---|
-| `runtime/d3d8webgl` | web layer re-derived vs. EA/GeneralsX + D3D8 spec; Lolendor as reference | keep EA §7 terms |
-| `runtime/compatlib`  | EA/GeneralsX | keep EA §7 terms |
-| `web-runtime`        | web layer re-derived; Lolendor as reference | keep EA §7 terms |
-| `asset-tools`        | web layer re-derived; Lolendor as reference | keep EA §7 terms |
+| EA, *C&C Generals / Zero Hour* source | GPL-3.0 + EA §7 terms | The kind of game this SDK runs. Studied to learn which D3D8 / Win32 surface a DX8-era engine needs. No file was copied. `EA_ADDITIONAL_TERMS.md` is reproduced for the games built on this SDK, not because the SDK derives from EA's code. |
+| fbraz3/GeneralsX | GPL-3.0 | Cross-platform port of the above. Studied for behaviour, cited in comments as `GeneralsX <file>:<line>`. No code copied. |
+| Lolendor/Generals-WebAssembly | GPL-3.0 (AI-generated fork) | Low-trust reference for the WebGL2 approach. Behaviour only. |
+| DXVK, `d3d9_fixed_function.cpp` | zlib | Behavioural model for `runtime/graphics-ff/`. If a line is ever copied, add the zlib notice to that file. |
+| Wine `wined3d` | LGPL-2.1 | Cross-check only. Never paste: it would pull LGPL text into a GPL file. |
 
-## Referenced for behavior only (no code copied)
+None of these appears in the tree, and no file carries an upstream copyright
+header, because nothing was extracted. Should a file ever be extracted from
+EA or GeneralsX, it keeps its upstream header verbatim and EA's §7 terms attach
+to it (`docs/LICENSING.md`, "Does this bind the SDK?").
 
-| Project | License | Rule |
-|---|---|---|
-| DXVK `d3d9_fixed_function.cpp` | zlib | Model logic; if any line copied, add zlib notice to that file. |
-| Wine `wined3d` | LGPL-2.1 | Read only. Never paste — pasting brings LGPL into the file. |
+## Not used
 
-## Vendored / linked libraries
-
-| Library | License | GPLv3-compatible? |
-|---|---|---|
-| SDL3 | zlib | yes |
-| OpenAL Soft | LGPL-2.1 | yes (static link OK under GPLv3; prefer SDL3 audio if avoidable) |
-| FFmpeg | LGPL-2.1 or GPL (`--enable-gpl`) | yes |
-| SPIRV-Cross | Apache-2.0 | yes |
-| glslang | BSD-3-Clause | yes |
-| Naga | MIT OR Apache-2.0 | yes |
-| Tint (Dawn) | BSD-3-Clause | yes |
-| **brotli-wasm** (web build) | **Apache-2.0** | yes — **vendored in-tree** at `web-runtime/vendor/brotli/` (browser has no native brotli). LICENSE included there. |
-
-Whenever a library is actually vendored into the tree, drop its full LICENSE
-text under the vendor dir (e.g. `web-runtime/vendor/<name>/LICENSE`) and
-reference it here.
+Earlier revisions of this file listed OpenAL Soft, FFmpeg, SPIRV-Cross, glslang,
+Naga and Tint as anticipated dependencies (audio, video, a WebGPU shader path).
+None is linked or vendored: audio and video stay game-side, and the WebGPU
+backend is parked (`docs/ROADMAP.md`). Add a row above the day one is pulled in,
+and drop its full LICENSE text under `web-runtime/vendor/<name>/` if it is
+vendored.

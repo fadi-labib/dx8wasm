@@ -50,7 +50,7 @@ Include paths: `runtime/`, `runtime/d3d8/`, `runtime/include/`.
 ### 2. Point the game's D3D8 include at ours
 The game includes `<d3d8.h>`; make that resolve to
 [`runtime/d3d8/d3d8.h`](../runtime/d3d8/d3d8.h) (add it to the include path, or
-alias it). It's a clean-room subset — if the game uses a method not declared
+alias it). It's an independently written subset — if the game uses a method not declared
 there, add the declaration and implement it in `runtime/d3d8webgl/device.cpp`
 (the coverage counters and link errors tell you what's missing).
 

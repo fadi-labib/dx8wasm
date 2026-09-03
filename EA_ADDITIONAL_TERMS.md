@@ -1,11 +1,15 @@
 # EA Additional Terms (per GNU GPL Section 7)
 
-These additional terms apply to all components of dx8wasm derived from
-Electronic Arts' GPLv3 release of *Command & Conquer: Generals / Zero Hour*
-(via the Lolendor/Generals-WebAssembly reference: `d3d8webgl`, `compatlib`,
-`web-runtime`, `asset-tools`). Under GPL Section 7 they are permitted further
-terms and **must be preserved and propagated** on any conveyance. Reproduced
-verbatim from EA's upstream LICENSE.md.
+dx8wasm itself contains no code from Electronic Arts' GPLv3 release of *Command &
+Conquer: Generals / Zero Hour*, nor from any fork of it. Every source file in this
+repository is an independent reimplementation of a Direct3D 8 / Win32 subset and
+carries only `SPDX-License-Identifier: GPL-3.0-only` (see `docs/LICENSING.md`).
+
+These terms are reproduced here because the SDK exists to run games built from
+EA's source. Such a game is a GPLv3 derivative of EA's release, and under GPL
+Section 7 EA's additional terms **must be preserved and propagated** on any
+conveyance of it -- including a browser deployment built with dx8wasm. The text
+below is reproduced verbatim from EA's upstream LICENSE.md.
 
 ---
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Clean-room D3D8 API declared from the public (documented) interface — the FULL
+// D3D8 API declared independently from the public (documented) interface — the FULL
 // COM ABI, in canonical vtable order, so a game compiled against any standard
 // D3D8 header (MinGW-w64 / DXVK-native / real Windows) dispatches to the right
 // slot. Only a subset is implemented; the rest are honest stubs that log + count

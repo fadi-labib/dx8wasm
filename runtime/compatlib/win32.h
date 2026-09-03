@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // compatlib Tier 0 — the Win32 bedrock a DX8 game references on its first frame:
-// core types, timing, and debug output. Clean-room from the public Win32 API
+// core types, timing, and debug output. Written independently from the public Win32 API
 // semantics; maps onto emscripten/POSIX. Grows tier by tier (see docs/COMPATLIB.md).
 //
 // A game includes this where it would include <windows.h>. The `using` aliases

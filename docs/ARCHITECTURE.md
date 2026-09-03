@@ -11,7 +11,7 @@ workflow see [`AGENTS.md`](../AGENTS.md).
         │  #include <d3d8.h>, <windows.h>, dx8wasm/contract.h
         ▼
 ┌───────────────────────────────────────────────────────────┐
-│ runtime/d3d8/d3d8.h        clean-room D3D8 API subset       │  ← the game-facing header
+│ runtime/d3d8/d3d8.h        independent D3D8 API subset      │  ← the game-facing header
 ├───────────────────────────────────────────────────────────┤
 │ runtime/d3d8webgl/         Device8 — translates D3D8→GLES3  │  lib: dx8_d3d8webgl
 │   device.cpp   state, buffers, textures, DrawIndexedPrimitive

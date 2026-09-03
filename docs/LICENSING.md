@@ -10,15 +10,17 @@ reference it?**
   GPLv3 derivatives. GPLv3 is strong copyleft — they can only be conveyed under
   GPLv3, can't be relicensed (we don't hold the copyright), and EA's §7 terms
   attach. A build linking them is GPLv3, full stop.
-- **If we stay clean-room** (read/reference GeneralsX/Lolendor, reimplement against
+- **If we stay an independent reimplementation** (read/reference GeneralsX/Lolendor, reimplement against
   the D3D8 API — which is Microsoft's, not EA's — and copy zero lines), the SDK is
   **not EA-derived** and we're free to license it however we want, including
   permissively. Copyright covers expression, not behavior or APIs.
 
-We just adopted a **prefer-re-deriving** stance (see Provenance), so the clean-room
-path is live. We still ship the whole SDK as GPL-3.0-only *by choice* — one license,
-no mixed-matrix footguns — until/unless we deliberately go permissive. See
-[Does this bind the SDK?](#does-this-bind-the-sdk) for the decision.
+**Nothing has been extracted.** Every file in the tree is an original carrying only
+its own SPDX header — there is no upstream copyright notice anywhere under
+`runtime/`, `web-runtime/` or `asset-tools/` (check: `git grep -il "electronic arts" -- runtime web-runtime asset-tools`
+returns nothing). The SDK is therefore not EA-derived. We still ship it as
+GPL-3.0-only *by choice* — one license, no mixed-matrix footguns — until/unless we
+deliberately go permissive. See [Does this bind the SDK?](#does-this-bind-the-sdk).
 
 - Full license text: [`LICENSE`](../LICENSE) (GNU GPL v3, 29 June 2007).
 - EA's additional terms: [`EA_ADDITIONAL_TERMS.md`](../EA_ADDITIONAL_TERMS.md).
@@ -29,12 +31,12 @@ The trigger for GPL + EA §7 is **copying/deriving code**, not reading it.
 
 | What we do with EA/GeneralsX | SDK is EA-derived? | SDK license |
 |---|---|---|
-| **Reference** — learn, reimplement clean-room, copy nothing | No | Our choice (permissive possible) |
+| **Reference** — learn, reimplement independently, copy nothing | No | Our choice (permissive possible) |
 | **Extract** — copy any EA/GeneralsX source | Yes | GPL-3.0-only + §7, non-negotiable |
 
 **Always true regardless:** a *consuming game* compiles EA's actual GPLv3 game
 source, so the **shipped game is always EA-derived** — GPLv3 + §7 bind it even if
-our SDK is 100% clean-room. dx8wasm exists to run that game, so §7 is always in
+our SDK copies nothing. dx8wasm exists to run that game, so §7 is always in
 play downstream; it only reaches *the SDK itself* if we extract.
 
 ## SPDX header convention
@@ -45,9 +47,10 @@ Every source file carries, at the top:
 SPDX-License-Identifier: GPL-3.0-only
 ```
 
-Extracted files **also keep their upstream copyright headers verbatim** and add
-a dx8wasm provenance annotation (`// dx8wasm @extract/@fix <author> <date>`, see
-`PORTING_METHOD.md` §6) so changes stay upstream-mergeable.
+Should a file ever be extracted, it **also keeps its upstream copyright header verbatim**
+and adds a dx8wasm provenance annotation (`// dx8wasm @extract/@fix <author> <date>`, see
+`PORTING_METHOD.md` §6) so changes stay upstream-mergeable. No file in the tree is
+extracted today, so this convention has no instances yet.
 
 ## EA Section 7 additional terms (must propagate)
 
@@ -71,7 +74,7 @@ Full wording in [`EA_ADDITIONAL_TERMS.md`](../EA_ADDITIONAL_TERMS.md).
 - **Game assets are never covered.** They remain the game owner's / publisher's
   copyright. dx8wasm never bundles or redistributes assets — users bring their
   own, as with the reference port.
-- **Permissive is on the table — if we stay clean-room.** As long as we copy no
+- **Permissive is on the table — as long as nothing is extracted.** As long as we copy no
   EA/GeneralsX code, the SDK isn't EA-derived and we could relicense some or all
   of it permissively (`contract.h`, `platform`, asset-format spec, methodology are
   natural candidates). We keep the GPLv3-uniform default for now to avoid a
@@ -105,16 +108,15 @@ from EA/GeneralsX upstream rather than extracting a header-less copy.
 
 ## Third-party dependencies
 
-We vendor / link these. All are GPL-3.0-compatible; two need care:
+What the SDK actually links or vendors today is small: **SDL3** (zlib, via the
+Emscripten port) and **brotli-wasm** (Apache-2.0, vendored under
+`web-runtime/vendor/brotli/`). Two reference sources need care even though no code
+is copied from them:
 
-| Dependency | License | Note |
+| Reference | License | Rule |
 |---|---|---|
 | DXVK (`d3d9_fixed_function.cpp`) | zlib | We model *behavior*, don't copy. If any line is copied verbatim, that file also carries the zlib notice. |
 | Wine `wined3d` | **LGPL-2.1** | Behavioral cross-check **only**. Never paste wined3d code — pasting pulls LGPL text into a file. Read for understanding, reimplement. |
-| SPIRV-Cross / glslang | Apache-2.0 / BSD | compatible |
-| Naga / Tint | MIT-Apache / BSD | compatible |
-| SDL3 | zlib | compatible |
-| OpenAL Soft | **LGPL-2.1** | WASM links statically → LGPL's dynamic-link escape doesn't apply. Subsumed by the SDK being GPLv3, but prefer SDL3 audio if avoidable. |
-| FFmpeg | LGPL-2.1 / GPL (`--enable-gpl`) | Either is fine under a GPLv3 SDK. |
 
-A machine-readable inventory lives in [`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md).
+The full inventory, including what earlier plans listed but never pulled in, is
+[`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md).

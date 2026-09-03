@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // compatlib Tier 1 — file + directory + shell-path shims over POSIX (the
-// emscripten filesystem). Clean-room from Win32 semantics. Windows paths use
+// emscripten filesystem). Written independently from Win32 semantics. Windows paths use
 // backslashes; every entry point normalizes them to '/'. 64-bit file offsets
 // are not handled (emscripten `long` is 32-bit) — fine for individual assets.
 #include "compatlib/win32.h"

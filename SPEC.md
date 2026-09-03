@@ -2,7 +2,7 @@
 
 **A reusable SDK for porting classic DirectX-8-era Windows games to WebAssembly (browser).**
 
-Status: **draft / scaffolding.** This document is the design contract; the code is being extracted and generalized from a working reference port (see §11).
+Status: **historical design document (July 2026).** It records the original design and phase plan. The code was then written as an independent reimplementation — nothing was extracted from the reference port — and the current state lives in `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/CONFORMANCE.md` and `docs/LICENSING.md`. Where this document and those disagree, they win.
 
 ---
 
@@ -10,7 +10,7 @@ Status: **draft / scaffolding.** This document is the design contract; the code 
 
 Turn "port a DX8 game to the browser" from a months-long bespoke effort into **"wire it up + fill the gaps it exposes."** Provide the batteries-included layers a classic Windows C++ game needs to run as WASM+WebGL2 (later +WebGPU), so each new game reuses the hard 80% instead of rebuilding it.
 
-Proven feasible: a full 500k-LOC engine (C&C Generals Zero Hour) already runs in-browser via this exact stack (the `Lolendor/Generals-WebAssembly` reference; see §11). dx8wasm extracts that stack, decouples it from any one game, hardens it for Linux CI, and documents the integration contract.
+Proven feasible: a full 500k-LOC engine (C&C Generals Zero Hour) already runs in-browser via this kind of stack (the `Lolendor/Generals-WebAssembly` reference; see §11). dx8wasm re-derives that stack independently, decoupled from any one game, hardened for Linux CI, with a documented integration contract.
 
 ## 2. Non-goals
 
@@ -154,7 +154,7 @@ Copyright-bearing upstreams (both GPL-3.0-only, both preserve EA's §7 terms): *
 
 ## 13. Licensing
 
-**GPL-3.0-only, uniformly.** The core (`d3d8webgl`, `compatlib`, `web-runtime`, `asset-tools`) is extracted from EA's GPLv3 C&C Generals/Zero Hour release (via the Lolendor reference) and cannot be relicensed. Rather than a fragile mixed matrix, the whole SDK — including our own new files — is GPL-3.0-only. EA's GPL §7 additional terms (no trademark use, notice must propagate, mark modifications, indemnify EA) apply to the derived code and therefore to the whole build. `graphics-ff` models DXVK (zlib) behaviorally without copying code. Consuming games are always GPLv3 derivatives (they compile EA's source) and must comply. The **SDK's own** license, though, is contingent: EA/§7 bind it only if we *extract* EA/GeneralsX code — if we stay clean-room (reference + reimplement, the preferred stance), the SDK isn't EA-derived and could go permissive. We ship GPLv3-uniform by default for simplicity; permissive stays open per component until something EA-derived is extracted. Authoritative details and the decision table: `docs/LICENSING.md` (§"Does this bind the SDK?"), plus `LICENSE`, `EA_ADDITIONAL_TERMS.md`, `THIRD_PARTY_LICENSES.md`.
+**GPL-3.0-only, uniformly, by choice.** This section originally planned to *extract* the core (`d3d8webgl`, `compatlib`, `web-runtime`, `asset-tools`) from EA's GPLv3 release via the Lolendor reference. That is not what happened: every file in the tree is an independent reimplementation carrying only its own SPDX header, so the SDK is not EA-derived and EA's GPL §7 terms do not bind it. They are reproduced in `EA_ADDITIONAL_TERMS.md` because consuming games (which compile EA's source) are GPLv3 derivatives and must carry them. `graphics-ff` models DXVK (zlib) behaviorally without copying code. Permissive relicensing of SDK components stays possible precisely because nothing was extracted; the moment something is, the affected component is GPLv3 + §7 for good. Authoritative details and the decision table: `docs/LICENSING.md` (§"Does this bind the SDK?"), plus `LICENSE` and `THIRD_PARTY_LICENSES.md`.
 
 ## 14. Roadmap
 
