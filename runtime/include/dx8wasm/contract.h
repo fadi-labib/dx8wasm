@@ -69,15 +69,24 @@ typedef struct {
     // D3DRS_*/D3DTSS_* token, so before this counter existed its absence from a capture proved
     // nothing at all — see docs/measured-gap.json's "does not speak to it" note.
     uint32_t unhandled_vertex_formats;
+    // Appended (keeps existing offsets): a real texture bound to a stage >= 2, or a real vertex
+    // buffer bound to a stream != 0. The backend chains two stages and one stream; anything
+    // beyond is dropped, which is a fallback and used to be swallowed with D3D_OK. Clearing
+    // those slots with nullptr (the engine's blanket state reset) is not counted.
+    uint32_t unhandled_slots;
 } dx8wasm_coverage;
 
 // Thread-affinity contract: safe to call from any thread, including one other
 // than the D3D8 producer thread (e.g. a main-thread ccall against an Emscripten
-// build with -sPROXY_TO_PTHREAD=1). The counters in `out` are always exact
-// regardless of caller thread. Internally this also flushes a small coalesced
-// telemetry tally; that flush is guarded against the producer thread with a
-// non-blocking atomic_flag, never a mutex, so calling this can never stall the
-// D3D8 thread and never double-emits or drops a telemetry count.
+// build with -sPROXY_TO_PTHREAD=1). The counters in `out` are plain 32-bit words
+// the producer thread increments without synchronisation, so a cross-thread read
+// is a snapshot good enough for a gauge (aligned words do not tear on wasm) but
+// not an exact one: a category counter and fallbacks_taken can be observed one
+// increment apart. Read on the producer thread when exactness matters. Internally
+// this also flushes a small coalesced telemetry tally; that flush is guarded
+// against the producer thread with a non-blocking atomic_flag, never a mutex, so
+// calling this can never stall the D3D8 thread and never double-emits or drops a
+// telemetry count.
 void dx8wasm_get_coverage(dx8wasm_coverage* out);
 
 // Optional callback: fired the first time each distinct unhandled item is seen.

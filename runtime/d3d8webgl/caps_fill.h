@@ -70,6 +70,6 @@ inline void fill_caps(D3DCAPS8* c) {
                             D3DVTXPCAPS_POSITIONALLIGHTS | D3DVTXPCAPS_LOCALVIEWER;
   c->MaxActiveLights = 8; c->MaxUserClipPlanes = 0;   // SetClipPlane is not implemented
   c->MaxPointSize = 64.0f;
-  c->MaxPrimitiveCount = 0x000FFFFF; c->MaxVertexIndex = 0x000FFFFF; c->MaxStreams = 16; c->MaxStreamStride = 256;
+  c->MaxPrimitiveCount = 0x000FFFFF; c->MaxVertexIndex = 0x000FFFFF; c->MaxStreams = 1 /* one stream is bound; more are counted, not drawn */; c->MaxStreamStride = 256;
   c->VertexShaderVersion = 0; c->PixelShaderVersion = 0;
 }

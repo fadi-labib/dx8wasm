@@ -74,6 +74,8 @@ coverage layer — never silently wrong.
 | COM ABI | full IDirect3DDevice8 vtable (~94 methods, canonical order); rest stubbed->coverage | ✅ yes | abi_smoke |
 | Device / present | Direct3DCreate8, CreateDevice, Clear, Present, Begin/EndScene, Reset | ✅ yes | d3d8_smoke / abi_smoke |
 | Vertex/index buffers | CreateVertexBuffer/IndexBuffer, Lock/Unlock, SetStreamSource, SetIndices | ✅ yes | draw_smoke |
+| Index formats: INDEX16 / INDEX32 | DrawIndexedPrimitive sizes glDrawElements from the buffer format; other formats refused at CreateIndexBuffer | ✅ yes | index32_smoke / resource_contract_smoke |
+| Resource contract: bounds + round-trips | Lock/LockRect/CopyRects refuse out-of-range, mismatched-format or off-block-grid requests; GetTexture/GetIndices return what was set; a real bind to stage >= 2 or stream != 0 is counted (MaxStreams = 1) | ✅ yes | resource_contract_smoke |
 | FVF: XYZ / NORMAL / DIFFUSE / TEX1 | attribute layout in FVF order | ✅ yes | draw_smoke / light_smoke |
 | FVF: XYZRHW (pre-transformed) | screen-space UI/HUD vertices (rhw=1) | ✅ yes | rhw_smoke |
 | D3D pixel-centre convention | clip space translated 7/16 px so D3D-aligned 2D geometry samples texel centres (Render2D -0.5 bias); coverage + sampling on both XYZ and XYZRHW paths | ✅ yes | rhw_pixel_center_smoke / rhw_texel_exact_smoke / xyz_texel_exact_smoke |

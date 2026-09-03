@@ -77,6 +77,7 @@ const SMOKES = [
   ['xyz_texel_exact_smoke', [64, 64, 64, 255]], // same through Render2D's real path: clip-space XYZ + identity matrices + the -0.5 bias; a transparent atlas neighbour must not halve the edge alpha
   ['resource_contract_smoke', [1, 0, 0, 255]], // DXT surface pitch is block-based; out-of-range buffer Lock refuses; GetTexture honours Stage
   ['strip_smoke', [0, 255, 255, 255]],         // triangle strip (primCount 2 -> 4 indices) fills the quad
+  ['index32_smoke', [0, 255, 0, 255]],         // a D3DFMT_INDEX32 buffer through DrawIndexedPrimitive is read as 32-bit indices, not u16 pairs
   ['combiner_smoke', [128, 128, 128, 255]],    // D3DTOP_ADD: tex(0.3,0.2,0.1) + diffuse(0.2,0.3,0.4)
   ['compat_smoke', [1, 0, 0, 255]],            // compatlib Tier 0 timing self-test (no GL)
   ['compat_file_smoke', [1, 0, 0, 255]],       // compatlib Tier 1 file/dir/memory self-test (no GL)
@@ -99,7 +100,12 @@ const base = `http://127.0.0.1:${server.address().port}`;
 let browser;
 try {
   browser = await launchChromium();
-  for (const [name, expected] of SMOKES) {
+  // Optional: name one or more smokes on the command line to run only those (a TDD loop on a
+  // single fixture). No arguments = the full suite, which is what ci.sh runs.
+  const only = new Set(process.argv.slice(2));
+  const run = only.size ? SMOKES.filter(([n]) => only.has(n)) : SMOKES;
+  assert.ok(run.length > 0, `no smoke matches ${[...only].join(', ')}`);
+  for (const [name, expected] of run) {
     assert.ok(existsSync(join(buildDir, `${name}.js`)), `${name}.js was not built`);
     writeFileSync(join(buildDir, `${name}.html`),
       `<!doctype html><canvas id=canvas width=4 height=4></canvas>` +

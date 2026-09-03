@@ -108,6 +108,8 @@ uint32_t g_frameBufUploads = 0;
 //   1. waste_ratio = bytes_uploaded / bytes_locked. Predicted saving is
 //      buf_upload_ms * (1 - 1/waste_ratio); the bar is >= 1.5 ms before a change that can alter
 //      what is drawn is worth making.
+//   (AB-nn / GT-nn below are lesson IDs from the Generals integration repo's docs/RESULTS-* and
+//   docs/LESSONS-* files: the measurements were taken against the real game, not in this repo.)
 //   2. Whether the cost is per-BYTE or per-CALL at all. AB-06 established the 461 us upload was a
 //      pipeline STALL, and stall cost does not scale with bytes. GL_DYNAMIC_DRAW already attacked
 //      that. If per-upload time stays flat across scenes while bytes_uploaded swings, cutting
@@ -296,9 +298,10 @@ struct GLBuffer {
     if (!pp) return D3DERR_INVALIDCALL;
     // Refuse an out-of-range lock the way real D3D8 does, instead of handing back a pointer past
     // the staging vector's end that the caller then writes through (silent heap corruption before
-    // Unlock ever runs). size==0 means "to the end of the buffer" in D3D8. The telemetry in Unlock
-    // only observes such damage after the fact; this prevents it.
-    if (off > cpu.size() || (size && (size_t)off + size > cpu.size())) return D3DERR_INVALIDCALL;
+    // Unlock ever runs). size==0 means "to the end of the buffer" in D3D8 -- so an offset EQUAL to
+    // the length is a zero-byte range whose pointer is one past the end, refused too (>=, not >).
+    // The telemetry in Unlock only observes such damage after the fact; this prevents it.
+    if (off >= cpu.size() || (size && (size_t)off + size > cpu.size())) return D3DERR_INVALIDCALL;
     lock_off = off; lock_size = size; lock_flags = flags; locked = true;
     *pp = cpu.data() + off; return D3D_OK;
   }
@@ -312,7 +315,8 @@ struct GLBuffer {
     // bytes-correlated, not fixed per call (Pearson r = 0.77 over 64 windows; bytes x1.31 ->
     // time x1.65). Both were required before touching this: a large waste ratio alone would not
     // have justified it, because AB-06 showed the cost was once a pipeline STALL, and stall cost
-    // does not scale with bytes. See docs/RESULTS-2026-08-07-buffer-upload-ranges.md.
+    // does not scale with bytes. Written up in the Generals integration repo (generals-dx8wasm),
+    // docs/RESULTS-2026-08-07-buffer-upload-ranges.md.
     UINT up_off = 0, up_size = (UINT)cpu.size();
     bool upload_all = true;
     {
@@ -322,9 +326,9 @@ struct GLBuffer {
         // whole-buffer write so the ratio errs AGAINST the hypothesis rather than flattering it.
         g_accBufUnlockUnmatched += 1.0;
       } else if (lock_off > cpu.size()) {
-        // Lock does no bounds check -- `cpu.data() + off` hands out a pointer past the staging
-        // vector for an out-of-range offset. That is a latent defect independent of this work;
-        // count it and upload conservatively rather than deriving a range from a garbage offset.
+        // Unreachable since Lock() refuses out-of-range offsets (2026-08-30). Kept as a guard so a
+        // future regression in Lock is COUNTED here and uploaded conservatively, rather than turned
+        // into a garbage upload range.
         g_accBufLockOob += 1.0;
         locked_bytes = 0.0;
       } else {
@@ -351,7 +355,7 @@ struct GLBuffer {
     if (!glbuf) glGenBuffers(1, &glbuf);
     glBindBuffer(target, glbuf);
     // Measured 2026-08-07: this call was 88% of the whole frame -- 60 buffer uploads per frame at
-    // 461 us each on ANGLE/OpenGL (docs RESULTS-2026-08-06-angle-backend.md, AB-06). 461 us is not
+    // 461 us each on ANGLE/OpenGL (integration repo, docs/RESULTS-2026-08-06-angle-backend.md, AB-06). 461 us is not
     // transfer cost for a buffer this size; it is a PIPELINE STALL. GL_STATIC_DRAW promises "written
     // once, drawn many times", so the driver places the buffer in device-local memory and, when the
     // same buffer is rewritten mid-frame, has to wait for the GPU to finish reading it first.
@@ -456,6 +460,13 @@ struct IndexBuffer8 : IDirect3DIndexBuffer8 {
 // UnlockRect uploads them verbatim as GL_RGBA (the .bgra shader swizzle fixes
 // channel order). Nearest + clamp — no mips/filtering until a target needs them.
 struct Surface8;  // fwd: texture mip levels are handed out as surfaces
+
+// A lock/copy rect must lie inside its w x h surface and be non-empty; real D3D8 refuses
+// anything else with D3DERR_INVALIDCALL rather than computing a pointer past the bytes.
+inline bool rect_within(const RECT& r, UINT w, UINT h) {
+  return r.left >= 0 && r.top >= 0 && r.left < r.right && r.top < r.bottom &&
+         r.right <= (LONG)w && r.bottom <= (LONG)h;
+}
 
 // DXT/S3TC block decompression (Generals' terrain/unit textures are DXT1/3/5).
 // Decoded to [R,G,B,A] byte order (uploaded as GL_RGBA, sampled plain — matching
@@ -630,12 +641,24 @@ struct Texture8 : IDirect3DTexture8 {
     return D3D_OK;
   }
   HRESULT GetSurfaceLevel(UINT Level, IDirect3DSurface8** ppSurfaceLevel) override;  // out-of-line (needs Surface8)
-  HRESULT LockRect(UINT l, D3DLOCKED_RECT* lr, const RECT*, DWORD) override {
+  HRESULT LockRect(UINT l, D3DLOCKED_RECT* lr, const RECT* r, DWORD) override {
     if (!lr || l >= levels.size()) return D3DERR_INVALIDCALL;
-    // DXT pitch is bytes per ROW OF BLOCKS; uncompressed is bytes per pixel row.
-    lr->Pitch = dxt::is_dxt(fmt) ? (int32_t)(((levels[l].w + 3) / 4) * dxt::block_bytes(fmt))
-                                 : (int32_t)(levels[l].w * texfmt::bpp(fmt));
-    lr->pBits = levels[l].px.data(); return D3D_OK;
+    if (r && !rect_within(*r, levels[l].w, levels[l].h)) return D3DERR_INVALIDCALL;   // never a pointer past the level
+    const UINT top = r ? (UINT)r->top : 0, left = r ? (UINT)r->left : 0;
+    // DXT pitch is bytes per ROW OF BLOCKS and the rect offset is block-granular; uncompressed is
+    // bytes per pixel row, pixel-granular -- the same convention Surface8::LockRect uses. This path
+    // used to ignore the rect and hand back the level origin, so a sub-rect write (partial texture
+    // streaming, a font atlas cell) landed at (0,0): silently wrong texels.
+    if (dxt::is_dxt(fmt)) {
+      const UINT bb = dxt::block_bytes(fmt);
+      lr->Pitch = (int32_t)(((levels[l].w + 3) / 4) * bb);
+      lr->pBits = levels[l].px.data() + (size_t)(top / 4) * (size_t)lr->Pitch + (size_t)(left / 4) * bb;
+    } else {
+      const UINT bp = texfmt::bpp(fmt);
+      lr->Pitch = (int32_t)(levels[l].w * bp);
+      lr->pBits = levels[l].px.data() + (size_t)top * (size_t)lr->Pitch + (size_t)left * bp;
+    }
+    return D3D_OK;
   }
   HRESULT UnlockRect(UINT l) override { upload_level(l); return D3D_OK; }
   // Upload one mip level to GL. Filter/wrap kept NEAREST/CLAMP (unchanged from the
@@ -724,6 +747,7 @@ struct Surface8 : IDirect3DSurface8 {
   }
   HRESULT LockRect(D3DLOCKED_RECT* lr, const RECT* r, DWORD) override {
     if (!lr) return D3DERR_INVALIDCALL;
+    if (r && !rect_within(*r, w, h)) return D3DERR_INVALIDCALL;   // never a pointer past the surface
     UINT top = r ? (UINT)r->top : 0, left = r ? (UINT)r->left : 0;
     if (dxt::is_dxt(fmt)) {
       // Block-compressed: pitch is bytes per ROW OF 4x4 BLOCKS, offset is block-granular -- the
@@ -953,7 +977,7 @@ struct Device8 : IDirect3DDevice8 {
   // backend was moved off NVIDIA's OpenGL driver onto Vulkan (2.3x, 30 -> 71 FPS), and the 4080
   // sat at idle clocks (P8, 210 MHz, 10 W of 320) mid-skirmish because commands were not
   // reaching it fast enough to wake it. See
-  // generals-dx8wasm/docs/RESULTS-2026-08-06-angle-backend.md.
+  // the Generals integration repo (generals-dx8wasm), docs/RESULTS-2026-08-06-angle-backend.md.
   //
   // "Reduce the number of draw calls" is the obvious response to that, and until these two
   // gauges existed it was an ASSUMPTION: nothing measured how many calls a frame issues or what
@@ -1079,6 +1103,9 @@ struct Device8 : IDirect3DDevice8 {
   }
   HRESULT CreateIndexBuffer(UINT Length, DWORD, D3DFORMAT Format, D3DPOOL, IDirect3DIndexBuffer8** out) override {
     if (!out) return D3DERR_INVALIDCALL;
+    // D3D8 index buffers are INDEX16 or INDEX32, nothing else; the draw path sizes its glDrawElements
+    // type from this, so an unknown format must be refused here rather than drawn as garbage later.
+    if (Format != D3DFMT_INDEX16 && Format != D3DFMT_INDEX32) { warn_once("CreateIndexBuffer: format is not INDEX16/INDEX32"); return D3DERR_INVALIDCALL; }
     *out = new IndexBuffer8(Length, Format); return D3D_OK;
   }
   HRESULT CreateTexture(UINT Width, UINT Height, UINT Levels, DWORD, D3DFORMAT Format, D3DPOOL, IDirect3DTexture8** out) override {
@@ -1089,8 +1116,9 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT SetStreamSource(UINT StreamNumber, IDirect3DVertexBuffer8* vb, UINT Stride) override {
     // Single-stream fixed-function pipeline: only stream 0 is used. The engine's
     // Apply_Render_State_Changes clears streams 1..N with SetStreamSource(i,null);
-    // those must NOT clobber stream 0 (they did when the stream index was ignored).
-    if (StreamNumber != 0) return D3D_OK;
+    // those must NOT clobber stream 0 (they did when the stream index was ignored). A REAL buffer
+    // on another stream is dropped, and that is a fallback: count it. Caps say MaxStreams = 1.
+    if (StreamNumber != 0) { if (vb) coverage::unhandled_stream(StreamNumber); return D3D_OK; }
     auto* n = static_cast<VertexBuffer8*>(vb);
     if (n) n->AddRef(); if (stream) stream->Release();
     stream = n; stride = Stride; return D3D_OK;
@@ -1121,7 +1149,13 @@ struct Device8 : IDirect3DDevice8 {
     ++frameStateCalls; ScopedMs _s(g_frameStateMs);
     auto* n = static_cast<Texture8*>(t);
     Texture8** slot = Stage == 0 ? &texture : (Stage == 1 ? &texture1 : nullptr);
-    if (!slot) return D3D_OK;   // only 2 stages
+    if (!slot) {
+      // Only 2 stages are chained. A real texture on stage 2+ is dropped -- a fallback, so it is
+      // counted (coverage, not silence). Clearing the slot with nullptr is the engine's blanket
+      // state reset and costs nothing.
+      if (n) coverage::unhandled_texture_stage(Stage);
+      return D3D_OK;
+    }
     if (n) n->AddRef(); if (*slot) (*slot)->Release();
     *slot = n; return D3D_OK;
   }
@@ -1513,7 +1547,12 @@ struct Device8 : IDirect3DDevice8 {
       if (texture1) apply_sampler(stageState[1], texture1); }
 
     if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, alphaRef / 255.0f);
-    if (p->uViewport >= 0) glUniform2f(p->uViewport, vpW, vpH);   // every path: the half-pixel translation (ff_shader.cpp) needs the target size
+    // Every path: the RHW screen->clip mapping and the 7/16-px translation (ff_shader.cpp) divide by
+    // this. ponytail: it is the BACKBUFFER size, so both are exact only while the D3D viewport is the
+    // full backbuffer -- which is how the UI is drawn. Inside a partial viewport (the in-game 3D view
+    // above the command bar) the translation lands at 7/16 * viewport/backbuffer px: a sub-pixel
+    // error on perspective geometry, invisible. Making it exact means uploading the viewport rect.
+    if (p->uViewport >= 0) glUniform2f(p->uViewport, vpW, vpH);
     if (lit) set_light_uniforms(p);
     if (fogEnable) { glUniform3fv(p->uFogColor, 1, fogColor); glUniform1f(p->uFogStart, fogStart); glUniform1f(p->uFogEnd, fogEnd); }
     return true;
@@ -1527,7 +1566,13 @@ struct Device8 : IDirect3DDevice8 {
     // (GLES3 has no glDrawElementsBaseVertex). Indices stay 0-based as the engine wrote them.
     if (!bind_pipeline((GLsizei)stride, (GLintptr)baseVertexIndex * stride)) return D3DERR_INVALIDCALL;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices->b.glbuf);
-    glDrawElements(mode, icount, GL_UNSIGNED_SHORT, (void*)(uintptr_t)(StartIndex * sizeof(uint16_t)));
+    // The element type comes from the buffer's format. This path hard-coded GL_UNSIGNED_SHORT (only
+    // DrawIndexedPrimitiveUP honoured the format), so a D3DFMT_INDEX32 buffer was read as u16 pairs:
+    // degenerate triangles, nothing drawn, nothing counted -- while caps advertise MaxVertexIndex
+    // 0xFFFFF. GL_UNSIGNED_INT element indices are core in GLES3/WebGL2. Pinned by index32_smoke.
+    const bool i32 = indices->fmt == D3DFMT_INDEX32;
+    glDrawElements(mode, icount, i32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT,
+                   (void*)(uintptr_t)(StartIndex * (i32 ? sizeof(uint32_t) : sizeof(uint16_t))));
     return D3D_OK;
   }
 
@@ -1592,17 +1637,39 @@ struct Device8 : IDirect3DDevice8 {
                     IDirect3DSurface8* dst, const POINT* dstPoints) override {
     auto* s = static_cast<Surface8*>(src); auto* d = static_cast<Surface8*>(dst);
     if (!s || !d) return D3DERR_INVALIDCALL;
+    // Real D3D8 does no conversion in CopyRects: the formats must match. Before this check a
+    // DXT5 -> DXT1 copy sized the destination stride from the SOURCE block and wrote twice the
+    // destination's row past its staging vector, silently.
+    if (s->fmt != d->fmt) { warn_once("CopyRects: source/destination format mismatch"); return D3DERR_INVALIDCALL; }
     // Bytes per pixel comes from the surface format, NOT a hardcoded 4. The shroud
     // (fog of war) copies an R5G6B5 (2 bpp) src into its R5G6B5 dst texture every
     // frame; using 4 here doubled every stride/offset and filled the dst with
     // misaligned garbage that projected onto terrain as cyan/green/black tiles.
     const UINT bpp = texfmt::bpp(s->fmt);
+    const bool compressed = dxt::is_dxt(s->fmt);
     UINT count = n ? n : 1;
+    auto rect_of = [&](UINT i, RECT& r, POINT& p) {
+      r = srcRects ? srcRects[i] : RECT{0, 0, (LONG)s->w, (LONG)s->h};
+      p = dstPoints ? dstPoints[i] : POINT{r.left, r.top};
+    };
+    // Validate every rect BEFORE copying any, so a bad call leaves the destination untouched.
+    // Real D3D8 refuses rects that leave either surface, and for block-compressed formats
+    // requires them on the 4x4 block grid (a rect may end at the surface edge). Without this the
+    // memcpy below ran past the staging vector for any of those -- heap corruption, no diagnostic.
     for (UINT i = 0; i < count; ++i) {
-      RECT r = srcRects ? srcRects[i] : RECT{0, 0, (LONG)s->w, (LONG)s->h};
-      POINT p = dstPoints ? dstPoints[i] : POINT{r.left, r.top};
+      RECT r; POINT p; rect_of(i, r, p);
+      const bool inSrc = r.left >= 0 && r.top >= 0 && r.left < r.right && r.top < r.bottom &&
+                         r.right <= (LONG)s->w && r.bottom <= (LONG)s->h;
+      const bool inDst = p.x >= 0 && p.y >= 0 && p.x + (r.right - r.left) <= (LONG)d->w &&
+                         p.y + (r.bottom - r.top) <= (LONG)d->h;
+      const bool onGrid = !compressed || ((r.left % 4) == 0 && (r.top % 4) == 0 && (p.x % 4) == 0 && (p.y % 4) == 0 &&
+                          ((r.right % 4) == 0 || r.right == (LONG)s->w) && ((r.bottom % 4) == 0 || r.bottom == (LONG)s->h));
+      if (!inSrc || !inDst || !onGrid) { warn_once("CopyRects: rect outside a surface or off the DXT block grid"); return D3DERR_INVALIDCALL; }
+    }
+    for (UINT i = 0; i < count; ++i) {
+      RECT r; POINT p; rect_of(i, r, p);
       UINT rw = (UINT)(r.right - r.left), rh = (UINT)(r.bottom - r.top);
-      if (dxt::is_dxt(s->fmt)) {
+      if (compressed) {
         // Block-compressed copy: stride is a row of 4x4 blocks, and rects/points are block-granular.
         const UINT bb = dxt::block_bytes(s->fmt);
         const size_t sPitch = (size_t)((s->w + 3) / 4) * bb, dPitch = (size_t)((d->w + 3) / 4) * bb;
@@ -1745,7 +1812,11 @@ struct Device8 : IDirect3DDevice8 {
   HRESULT GetVertexShaderDeclaration(DWORD, void*, DWORD*) override { return D3DERR_INVALIDCALL; }
   HRESULT GetVertexShaderFunction(DWORD, void*, DWORD*) override { return D3DERR_INVALIDCALL; }
   HRESULT GetStreamSource(UINT, IDirect3DVertexBuffer8** o, UINT* s) override { if (o) { *o = stream; if (stream) stream->AddRef(); } if (s) *s = stride; return D3D_OK; }
-  HRESULT GetIndices(IDirect3DIndexBuffer8** o, UINT* base) override { if (o) { *o = indices; if (indices) indices->AddRef(); } if (base) *base = 0; return D3D_OK; }
+  HRESULT GetIndices(IDirect3DIndexBuffer8** o, UINT* base) override {
+    if (o) { *o = indices; if (indices) indices->AddRef(); }
+    if (base) *base = baseVertexIndex;   // the Get/Set round-trip: a save/restore bracket must get back what it set
+    return D3D_OK;
+  }
   HRESULT SetPixelShader(DWORD) override { warn_once("SetPixelShader"); return D3D_OK; }
   HRESULT GetPixelShader(DWORD* h) override { if (h) *h = 0; return D3D_OK; }
   HRESULT CreatePixelShader(const DWORD*, DWORD* h) override { if (h) *h = 0; warn_once("CreatePixelShader"); return D3DERR_INVALIDCALL; }
