@@ -20,6 +20,8 @@ Proven: a full 500k-LOC engine (the GPLv3 *Command & Conquer: Generals — Zero 
 Not an emulator, not a magic button, not for modern DX11/12 AAA. No audio layer, no networking, and no WebGPU backend (parked, see `docs/ROADMAP.md`). See `SPEC.md` §2–3, §12 for the fit criteria and the "which strategy for which game" decision framework.
 
 ## Status
+**v0.1.0 (2026-09-03) is the first public release**; the review that preceded it is
+[`docs/RESULTS-2026-09-03-pre-publish-review.md`](docs/RESULTS-2026-09-03-pre-publish-review.md).
 **Phases 0–4 done; game-integration foundation in place.** The D3D8→WebGL2
 fixed-function pipeline is broadly feature-complete (transforms, all light types,
 ambient/diffuse/specular, fog, texture combiners, render states, pre-transformed
