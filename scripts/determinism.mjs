@@ -8,6 +8,7 @@
 // path across fresh processes, nothing shader-cache-related yet.
 // A game with replays extends this: digest its own simulation state per tick and compare here.
 import { createServer } from 'node:http';
+import { resolveUnder } from './lib/static-path.mjs';
 import { statSync, existsSync, writeFileSync, createReadStream } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,9 +33,8 @@ writeFileSync(join(buildDir, `${NAME}.html`),
   `<!doctype html><canvas id=canvas width=4 height=4></canvas><script src="${NAME}.js"></script>`);
 
 const server = createServer((req, res) => {
-  const p = decodeURIComponent(req.url.split('?')[0]);
-  const file = join(buildDir, p === '/' ? 'index.html' : p);
-  let st; try { st = statSync(file); } catch { res.writeHead(404).end(); return; }
+  const file = resolveUnder(buildDir, req.url, 'index.html');   // confined to buildDir; null = 404
+  let st; try { if (!file) throw 0; st = statSync(file); } catch { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream',
     'Content-Length': st.size });
   createReadStream(file).pipe(res);

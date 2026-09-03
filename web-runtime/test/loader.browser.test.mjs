@@ -7,9 +7,10 @@
 // Run: node web-runtime/test/loader.browser.test.mjs
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { resolveUnder } from '../../scripts/lib/static-path.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, createReadStream } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, normalize } from 'node:path';
+import {join, dirname} from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -46,12 +47,13 @@ try {
   // ── static + Range server, cross-origin isolated ──
   const roots = { '/assets/': assets };
   server = createServer((req, res) => {
-    const urlPath = decodeURIComponent(req.url.split('?')[0]);
-    let file;
-    if (urlPath.startsWith('/assets/')) file = join(assets, normalize(urlPath.slice('/assets/'.length)));
-    else file = join(webRoot, normalize(urlPath === '/' ? 'index.html' : urlPath));
+    // Two roots, each confined by resolveUnder (null = 404): the packed archive under /assets/,
+    // everything else from the web root.
+    const file = req.url.startsWith('/assets/')
+      ? resolveUnder(assets, req.url.slice('/assets'.length))
+      : resolveUnder(webRoot, req.url);
     let st;
-    try { st = statSync(file); } catch { res.writeHead(404).end('nope'); return; }
+    try { if (!file) throw 0; st = statSync(file); } catch { res.writeHead(404).end('nope'); return; }
     const ext = file.slice(file.lastIndexOf('.'));
     const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',

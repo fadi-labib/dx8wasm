@@ -7,8 +7,9 @@
 //
 // Run: node web-runtime/test/onboard.browser.test.mjs
 import { createServer } from 'node:http';
+import { resolveUnder } from '../../scripts/lib/static-path.mjs';
 import { statSync, createReadStream } from 'node:fs';
-import { join, dirname, normalize } from 'node:path';
+import {join, dirname} from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -20,9 +21,8 @@ const MIME = { '.js': 'text/javascript', '.html': 'text/html', '.wasm': 'applica
 let server, browser;
 try {
   server = createServer((req, res) => {
-    const p = decodeURIComponent(req.url.split('?')[0]);
-    const file = join(webRoot, normalize(p === '/' ? 'index.html' : p));
-    let st; try { st = statSync(file); } catch { res.writeHead(404).end(); return; }
+    const file = resolveUnder(webRoot, req.url);   // confined to webRoot; null = 404
+    let st; try { if (!file) throw 0; st = statSync(file); } catch { res.writeHead(404).end(); return; }
     res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream',
       'Content-Length': st.size });
     createReadStream(file).pipe(res);

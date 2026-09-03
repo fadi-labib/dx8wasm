@@ -18,6 +18,9 @@ echo "  emcc $have (pinned)"
 
 echo "== packer selftest =="
 python3 asset-tools/pack.py --selftest
+echo "== dev-server selftest =="
+python3 tools/serve-https.py --selftest
+
 
 echo "== harness dependencies =="
 # web-runtime/node_modules/ is gitignored and this script has no install step, so on a fresh checkout

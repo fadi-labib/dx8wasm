@@ -4,6 +4,7 @@
 //   node scripts/demo.mjs --shot out.png  -> build + render headlessly, save PNG
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { resolveUnder } from './lib/static-path.mjs';
 import { statSync, writeFileSync, createReadStream } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,9 +30,8 @@ writeFileSync(join(buildDir, 'spin_demo.html'),
 
 const shotIdx = process.argv.indexOf('--shot');
 const server = createServer((req, res) => {
-  const p = decodeURIComponent(req.url.split('?')[0]);
-  const file = join(buildDir, p === '/' ? 'spin_demo.html' : p);
-  let st; try { st = statSync(file); } catch { res.writeHead(404).end(); return; }
+  const file = resolveUnder(buildDir, req.url, 'spin_demo.html');   // confined to buildDir; null = 404
+  let st; try { if (!file) throw 0; st = statSync(file); } catch { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream',
     'Content-Length': st.size });
   createReadStream(file).pipe(res);

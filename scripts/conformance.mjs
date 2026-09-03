@@ -4,6 +4,7 @@
 // counters); the feature table is curated and paired with the verifying smoke.
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { resolveUnder } from './lib/static-path.mjs';
 import { statSync, writeFileSync, readFileSync, createReadStream, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,9 +23,8 @@ writeFileSync(join(buildDir, 'conformance.html'),
   `<script src="conformance.js"></script>`);
 
 const server = createServer((req, res) => {
-  const p = decodeURIComponent(req.url.split('?')[0]);
-  const file = join(buildDir, p === '/' ? 'conformance.html' : p);
-  let st; try { st = statSync(file); } catch { res.writeHead(404).end(); return; }
+  const file = resolveUnder(buildDir, req.url, 'conformance.html');   // confined to buildDir; null = 404
+  let st; try { if (!file) throw 0; st = statSync(file); } catch { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream',
     'Content-Length': st.size });
   createReadStream(file).pipe(res);

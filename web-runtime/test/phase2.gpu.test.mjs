@@ -3,6 +3,7 @@
 // assert the read-back pixel. Ordered gl -> platform -> d3d8 to isolate failures.
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { resolveUnder } from '../../scripts/lib/static-path.mjs';
 import { statSync, existsSync, writeFileSync, createReadStream } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,9 +87,8 @@ const SMOKES = [
 ];
 
 const server = createServer((req, res) => {
-  const p = decodeURIComponent(req.url.split('?')[0]);
-  const file = join(buildDir, p === '/' ? 'index.html' : p);
-  let st; try { st = statSync(file); } catch { res.writeHead(404).end(); return; }
+  const file = resolveUnder(buildDir, req.url);   // confined to buildDir; null = 404
+  let st; try { if (!file) throw 0; st = statSync(file); } catch { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream',
     'Content-Length': st.size });
   createReadStream(file).pipe(res);
