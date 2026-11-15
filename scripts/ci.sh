@@ -48,5 +48,9 @@ node web-runtime/test/phase2.gpu.test.mjs
 
 echo "== determinism harness =="
 node scripts/determinism.mjs
+# The vtable order of every D3D8 interface against D3D8's own. A caller compiled against the real
+# d3d8.h dispatches by slot, so a misordered declaration silently calls the wrong method (the pixel
+# shader trio once was). Pure node, no build needed.
+node scripts/abi-order.mjs
 
 echo "ALL GREEN"
