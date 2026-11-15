@@ -450,9 +450,11 @@ struct IDirect3DDevice8 : IUnknownD3D {
   virtual HRESULT GetStreamSource(UINT, IDirect3DVertexBuffer8**, UINT*) = 0;
   virtual HRESULT SetIndices(IDirect3DIndexBuffer8* pIndexData, UINT BaseVertexIndex) = 0;
   virtual HRESULT GetIndices(IDirect3DIndexBuffer8**, UINT*) = 0;
+  // D3D8 order is Create, Set, Get. These three were once declared Set, Get, Create, which routed
+  // every caller compiled against the real d3d8.h to the wrong method (scripts/abi-order.mjs).
+  virtual HRESULT CreatePixelShader(const DWORD* pFunction, DWORD* pHandle) = 0;
   virtual HRESULT SetPixelShader(DWORD Handle) = 0;
   virtual HRESULT GetPixelShader(DWORD* pHandle) = 0;
-  virtual HRESULT CreatePixelShader(const DWORD* pFunction, DWORD* pHandle) = 0;
   virtual HRESULT DeletePixelShader(DWORD Handle) = 0;
   virtual HRESULT SetPixelShaderConstant(DWORD, const void*, DWORD) = 0;
   virtual HRESULT GetPixelShaderConstant(DWORD, void*, DWORD) = 0;
